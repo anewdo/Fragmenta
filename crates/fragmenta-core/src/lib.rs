@@ -4,5 +4,7 @@
 //! 模块全部依赖注入、无全局静态（架构 §2 / D1 / D2）。
 
 pub mod db;
+pub mod export;
+pub mod media;
 pub mod model;
 pub mod settings;

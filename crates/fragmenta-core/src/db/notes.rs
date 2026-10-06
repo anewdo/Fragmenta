@@ -1,14 +1,14 @@
 //! 笔记数据访问（架构 §5.2）：upsert / delete / 筛选查询。
 //!
-//! upsert 只写标题与正文；分类 / 标签由 taxonomy 接口管理（Phase 4），
+//! upsert 只写标题与正文；分类 / 标签挂载由 taxonomy 接口管理，
 //! 查询侧经 JOIN 读回完整 `Note`。
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Local};
+use chrono::Local;
 use rusqlite::{Connection, params, params_from_iter};
 
-use super::{Db, DbError, Result};
+use super::{Db, DbError, Result, parse_timestamp};
 use crate::model::{Note, NoteFilter, SearchScope};
 
 impl Db {
@@ -44,10 +44,14 @@ impl Db {
         Ok(())
     }
 
-    /// 删除笔记；note_tags 经外键级联清理。目标不存在时为无操作。
+    /// 删除笔记；note_tags 经外键级联清理，失去全部引用的标签随之清理
+    /// （分类为显式实体，保留）。目标不存在时为无操作。
     pub fn delete_note(&self, id: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+        super::taxonomy::prune_orphan_tags(&tx)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -158,11 +162,4 @@ fn like_pattern(query: &str) -> String {
         pattern.push(ch);
     }
     format!("%{pattern}%")
-}
-
-/// 解析库中 RFC3339 本地时间。
-fn parse_timestamp(s: &str) -> Result<DateTime<Local>> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|dt| dt.with_timezone(&Local))
-        .map_err(|_| DbError::CorruptTimestamp(s.to_string()))
 }
