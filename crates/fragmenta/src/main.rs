@@ -1,1 +1,3 @@
-fn main() {}
+fn main() {
+    fragmenta::app::run();
+}
