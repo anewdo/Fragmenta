@@ -17,10 +17,16 @@ pub struct SourceText {
 }
 
 impl SourceText {
-    /// 创建组件。`images` 为图库（应用层固定注入 `{exe_dir}/imgs`）。
-    pub fn new<T: 'static>(images: Images, window: &mut Window, cx: &mut Context<T>) -> Self {
+    /// 创建组件。`images` 为图库（应用层固定注入 `{exe_dir}/imgs`）；
+    /// `placeholder` 为空内容占位文案。
+    pub fn new<T: 'static>(
+        images: Images,
+        placeholder: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Self {
         Self {
-            textarea: cx.new(|cx| TextareaState::new(window, cx)),
+            textarea: cx.new(|cx| TextareaState::new(window, cx).placeholder(placeholder)),
             images,
         }
     }

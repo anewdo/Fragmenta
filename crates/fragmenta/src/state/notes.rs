@@ -62,11 +62,28 @@ impl NotesState {
         }));
     }
 
-    /// 立即落库该槽 pending 内容并取消待触发写入（磁贴关闭路径）。
+    /// 立即落库该槽 pending 内容并取消待触发写入，返回落库结果（磁贴关闭路径）。
     ///
-    /// 槽位不存在时为无操作；此前落库失败的槽保留在此，此调用即重试。
-    pub fn flush_now(&mut self, key: NoteKey, cx: &mut Context<Self>) {
-        self.flush(&key, cx);
+    /// 槽位不存在时返回 `None`（无待写内容）；此前落库失败的槽保留在此，
+    /// 此调用即重试，调用方依返回值决定是否放行后续动作（如关窗）。
+    pub fn flush_now(&mut self, key: NoteKey, cx: &mut Context<Self>) -> Option<SaveStatus> {
+        self.flush(&key, cx)
+    }
+
+    /// 丢弃该槽待写内容：移除槽位、不落库、不发事件。
+    ///
+    /// 供磁贴两条路径使用——空磁贴关闭（免于落出空笔记）与草稿晋升后清理
+    /// 旧 `Draft` 槽（防计时竞态落出重复内容）。
+    pub fn cancel(&mut self, key: &NoteKey) {
+        self.pending.remove(key);
+    }
+
+    /// 立即落库全部 pending 槽（退出应用 / 数据迁移前的一致性保障）。
+    pub fn flush_all(&mut self, cx: &mut Context<Self>) {
+        let keys: Vec<NoteKey> = self.pending.keys().cloned().collect();
+        for key in keys {
+            self.flush(&key, cx);
+        }
     }
 
     /// 删除笔记；成功后广播 `Changed`（note_tags 级联与孤儿标签清理由 db 层负责）。
@@ -95,11 +112,9 @@ impl NotesState {
         self.db.notes(filter)
     }
 
-    /// 取出该槽并落库；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。
-    fn flush(&mut self, key: &NoteKey, cx: &mut Context<Self>) {
-        let Some(write) = self.pending.remove(key) else {
-            return;
-        };
+    /// 取出该槽并落库，返回结果；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。
+    fn flush(&mut self, key: &NoteKey, cx: &mut Context<Self>) -> Option<SaveStatus> {
+        let write = self.pending.remove(key)?;
         let emit_key = write.draft.key.clone();
         let mut note = write.draft.to_note();
         match self.db.upsert_note(&mut note) {
@@ -110,6 +125,7 @@ impl NotesState {
                     status: SaveStatus::Saved,
                 });
                 cx.emit(Event::Changed);
+                Some(SaveStatus::Saved)
             }
             Err(_) => {
                 self.pending.insert(
@@ -124,6 +140,7 @@ impl NotesState {
                     id: note.id,
                     status: SaveStatus::Failed,
                 });
+                Some(SaveStatus::Failed)
             }
         }
     }
