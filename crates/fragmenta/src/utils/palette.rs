@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::BuildHasher;
 
 use gpui_kit::{Hsla, hsla, rgb};
 
@@ -94,12 +94,9 @@ impl ColorPalette {
 
 /// Fisher-Yates 洗牌：每个随机数为 `hasher` 对 `(seed, counter)` 的哈希。
 fn shuffle(bag: &mut [Hsla], seed: &str, hasher: &RandomState) {
-    let mut counter: u64 = 0;
-    for i in (1..bag.len()).rev() {
-        let mut h = hasher.build_hasher();
-        (seed, counter).hash(&mut h);
-        counter += 1;
-        let j = (h.finish() % (i as u64 + 1)) as usize;
+    for (counter, i) in (0_u64..).zip((1..bag.len()).rev()) {
+        let mixed = hasher.hash_one((seed, counter));
+        let j = (mixed % (i as u64 + 1)) as usize;
         bag.swap(i, j);
     }
 }

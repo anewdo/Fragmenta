@@ -118,9 +118,8 @@ fn taxonomy_form_content(
                     .rounded_full()
                     .child(category),
                 move |_, _, cx| {
-                    let _ = weak_remove.update(cx, |this, cx| {
-                        this.remove_taxonomy_category(note_id, cx)
-                    });
+                    let _ = weak_remove
+                        .update(cx, |this, cx| this.remove_taxonomy_category(note_id, cx));
                 },
             )
             .into_any_element()
@@ -155,9 +154,8 @@ fn taxonomy_form_content(
                         .rounded_full()
                         .child(format!("#{tag}")),
                     move |_, _, cx| {
-                        let _ = weak_remove.update(cx, |this, cx| {
-                            this.remove_taxonomy_tag(note_id, &tag, cx)
-                        });
+                        let _ = weak_remove
+                            .update(cx, |this, cx| this.remove_taxonomy_tag(note_id, &tag, cx));
                     },
                 )
             }))

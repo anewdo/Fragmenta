@@ -1,12 +1,12 @@
-//! 笔记页（Phase 9）：搜索筛选栏 + 笔记卡片列表；编辑器双栏组装在 Phase 10。
+//! 笔记页（Phase 9 / 10）：搜索筛选栏 + 笔记卡片列表 + 右栏 Markdown 编辑器。
 //!
 //! 数据流遵循架构铁律：render 内不查询——列表与筛选选项均为回调 /
 //! 订阅（`InputEvent::Change` / `Event::Changed`）时拉取的页字段快照；
 //! 页面 Entity 常驻于 shell，切换页面时筛选与滚动状态天然保留。
 //!
-//! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 对话框 / 分类标签表单会话），
-//! 视图构建（筛选栏 / 卡片 / 空态 / render）见 `view.rs`，
-//! 分类与标签编辑表单（Popover 内容）见 `taxonomy_form.rs`。
+//! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 选中载入 / 对话框 /
+//! 分类标签表单会话），视图构建（筛选栏 / 卡片 / 空态 / 双栏 render）
+//! 见 `view.rs`，分类与标签编辑表单（Popover 内容）见 `taxonomy_form.rs`。
 
 mod taxonomy_form;
 mod view;
@@ -22,7 +22,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::app::NotesStore;
-use crate::state::{Event, NotesState};
+use crate::editor::{EditorMode, NoteEditor};
+use crate::state::{Event, NoteKey, NotesState};
 
 /// 笔记页视图：筛选栏 + 卡片列表，常驻于主窗口 shell。
 pub struct NotesPage {
@@ -42,6 +43,10 @@ pub struct NotesPage {
     tags: Vec<String>,
     /// 当前打开的分类与标签编辑表单会话（同一时刻至多一个）。
     taxonomy_form: Option<TaxonomyForm>,
+    /// 右栏编辑器（Phase 10）。
+    editor: Entity<NoteEditor>,
+    /// 编辑器正打开的笔记 id（None = 空态占位）。
+    selected: Option<i64>,
     /// 重命名对话框 key 序号：每次打开生成全新 InputState，免受上次编辑值残留。
     rename_seq: usize,
     _query_sub: Subscription,
@@ -88,6 +93,8 @@ impl NotesPage {
             categories: Vec::new(),
             tags: Vec::new(),
             taxonomy_form: None,
+            editor: cx.new(|cx| NoteEditor::new(window, cx)),
+            selected: None,
             rename_seq: 0,
             _query_sub: query_sub,
             _changed_sub: changed_sub,
@@ -131,6 +138,44 @@ impl NotesPage {
             || !self.selected_tags.is_empty()
     }
 
+    /// 编辑器当前模式（模式切换按钮组由主窗口标题栏承载）。
+    pub fn editor_mode(&self, cx: &App) -> EditorMode {
+        self.editor.read(cx).mode()
+    }
+
+    /// 切换编辑器模式。
+    pub fn set_editor_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.set_mode(mode, cx));
+    }
+
+    /// 选中卡片 → 编辑器载入（Phase 10）。
+    ///
+    /// 载入前先 `flush_now` 目标 key 并重拉快照：目标笔记的待写内容可能
+    /// 来自磁贴（或本编辑器上次编辑后 300ms 内被切走），先落库再读，
+    /// 保证编辑器载入的是最新内容；前一笔记的 pending 防抖仍由 state
+    /// 保障落库（ADR-0001 按 key 分区，互不干扰）。重复点击同一卡片为
+    /// 无操作（编辑中点击自身卡片不清空、不重载）。
+    fn select_note(&mut self, note_id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected == Some(note_id) {
+            return;
+        }
+        self.notes.update(cx, |state, cx| {
+            state.flush_now(NoteKey::Note(note_id), cx);
+        });
+        self.refresh(cx);
+        let note = self
+            .list
+            .as_ref()
+            .ok()
+            .and_then(|notes| notes.iter().find(|note| note.id == note_id).cloned());
+        if let Some(note) = note {
+            self.selected = Some(note_id);
+            self.editor
+                .update(cx, |editor, cx| editor.load(&note, window, cx));
+        }
+    }
+
     /// 删除确认：Danger 主按钮，确认后走 `NotesState::delete`（Changed 驱动重拉）。
     fn confirm_delete(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         let weak = cx.entity().downgrade();
@@ -143,9 +188,16 @@ impl NotesPage {
                 .ok_text("删除")
                 .ok_variant(ButtonVariant::Danger)
                 .cancel_text("取消")
-                .on_ok(move |_, _, cx| {
+                .on_ok(move |_, window, cx| {
                     let _ = weak.update(cx, |this, cx| {
                         this.notes.update(cx, |s, cx| s.delete(id, cx));
+                        // 删除协调（§5.6）：正打开的笔记被删 → 同步清空编辑器
+                        //（cancel 该 key 待写槽，免于过期 upsert 虚警）
+                        if this.selected == Some(id) {
+                            this.selected = None;
+                            this.editor
+                                .update(cx, |editor, cx| editor.clear(window, cx));
+                        }
                     });
                     true
                 })

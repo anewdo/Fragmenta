@@ -9,10 +9,13 @@ mod settings;
 mod todos;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem, SidebarToggleButton};
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+
+use crate::editor::EditorMode;
 
 use home::HomePage;
 use notes::NotesPage;
@@ -114,11 +117,60 @@ impl MainShell {
                 cx.notify();
             }))
     }
+
+    /// 笔记页标题栏右侧槽位：编辑器模式切换组（矩形边框分段按钮，
+    /// 控制 `NotesPage` 内 `NoteEditor` 的三模式）。
+    fn notes_header_slot(&self, cx: &Context<Self>) -> AnyElement {
+        let mode = self.notes.read(cx).editor_mode(cx);
+        let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .compact()
+                .icon(icon)
+                .label(label)
+                .selected(mode == target)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.notes
+                        .update(cx, |page, cx| page.set_editor_mode(target, cx));
+                    // 按钮组随 shell 渲染，须通知 shell 刷新选中态
+                    cx.notify();
+                }))
+        };
+        h_flex()
+            .items_center()
+            .gap_0p5()
+            .p(px(1.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(px(4.))
+            .child(button(
+                "editor-mode-source",
+                "源码",
+                IconName::PenLine,
+                EditorMode::Source,
+            ))
+            .child(button(
+                "editor-mode-preview",
+                "预览",
+                IconName::Eye,
+                EditorMode::Preview,
+            ))
+            .child(button(
+                "editor-mode-split",
+                "分屏",
+                IconName::Columns2,
+                EditorMode::Split,
+            ))
+            .into_any_element()
+    }
 }
 
 impl Render for MainShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
+        // 笔记页标题栏右侧槽位（模式切换组）先于元素链构建，避免借用交叉
+        let notes_header_slot = (self.page == Page::Notes).then(|| self.notes_header_slot(cx));
         div()
             .flex()
             .size_full()
@@ -160,7 +212,11 @@ impl Render for MainShell {
                                     cx.notify();
                                 }),
                             ))
-                            .child(self.page.title()),
+                            .child(self.page.title())
+                            .when_some(notes_header_slot, |el, slot| {
+                                // 与页面标题同容器，靠右对齐（px_3 提供与边界的间距）
+                                el.child(div().flex_1().min_w(px(24.))).child(slot)
+                            }),
                     )
                     .child(div().flex_1().min_h_0().child(match self.page {
                         Page::Home => self.home.clone().into_any_element(),

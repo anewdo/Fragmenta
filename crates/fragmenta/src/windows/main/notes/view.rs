@@ -18,7 +18,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
-use crate::widgets::{CategoryTag, TagBadge};
+use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
 /// 卡片标签徽片上限：超过仅显示前 3 个 + "+N" 计数。
 const CARD_TAG_LIMIT: usize = 3;
@@ -127,9 +127,13 @@ impl NotesPage {
     }
 
     /// 单张笔记卡片：标题行 + 摘要 + 分类 / 标签徽片 + 分类标签表单弹层 + 删除确认。
+    ///
+    /// 点击卡片任意处 = 选中载入编辑器（正打开的卡片描边高亮）。
+    #[allow(clippy::too_many_arguments)]
     fn note_card(
         &self,
         note: &Note,
+        selected: bool,
         weak: &WeakEntity<Self>,
         card_bg: Hsla,
         border: Hsla,
@@ -153,7 +157,16 @@ impl NotesPage {
             .rounded(px(6.))
             .bg(card_bg)
             .border_1()
-            .border_color(border)
+            .border_color(if selected { accent } else { border })
+            .cursor_pointer()
+            .on_click({
+                let weak = weak.clone();
+                move |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        this.select_note(note_id, window, cx);
+                    });
+                }
+            })
             .hover(move |style| style.border_color(accent))
             // 标题行：标题 + 创建时间 + 分类标签表单 + 删除
             .child(
@@ -233,10 +246,9 @@ impl NotesPage {
 impl Render for NotesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
-        let (background, card_bg, border, muted, accent, danger) = {
+        let (card_bg, border, muted, accent, danger) = {
             let theme = cx.theme();
             (
-                theme.background,
                 theme.secondary,
                 theme.border,
                 theme.muted_foreground,
@@ -372,18 +384,27 @@ impl Render for NotesPage {
                 .px_3()
                 .py_2()
                 .overflow_y_scrollbar()
-                .children(
-                    notes
-                        .iter()
-                        .map(|note| self.note_card(note, &weak, card_bg, border, muted, accent)),
-                )
+                .children(notes.iter().map(|note| {
+                    let selected = self.selected == Some(note.id);
+                    self.note_card(note, selected, &weak, card_bg, border, muted, accent)
+                }))
                 .into_any_element(),
         };
 
-        v_flex()
+        // 左栏：筛选栏 + 列表（双栏组装，Phase 10）
+        let left = v_flex()
             .size_full()
-            .bg(background)
+            .min_w_0()
             .child(filter_bar)
-            .child(list_area)
+            .child(list_area);
+
+        // 双栏：分界线可拖动（左栏 400px 起步，钳制 ≥240px）
+        ResizableSplit::new(
+            "notes-page-split",
+            left.into_any_element(),
+            self.editor.clone().into_any_element(),
+        )
+        .left_size(px(400.))
+        .left_range(px(240.)..Pixels::MAX)
     }
 }

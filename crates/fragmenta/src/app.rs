@@ -15,8 +15,8 @@ use gpui_kit::component::{Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{App, AppContext, Entity, Global, QuitMode, WindowAppearance, px};
 
 use crate::hotkey::HotkeyController;
-use crate::utils::palette::ColorPalette;
 use crate::state::NotesState;
+use crate::utils::palette::ColorPalette;
 use crate::windows;
 
 /// App 级共享笔记 store（D3）：主窗口与全部磁贴持有同一 handle。

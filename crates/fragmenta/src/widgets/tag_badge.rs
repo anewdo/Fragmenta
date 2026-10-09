@@ -14,11 +14,7 @@ use crate::utils::palette::filled_foreground;
 
 /// 从全局取色盘按名字取色（映射进程内稳定，同名同色）。
 fn color_of(name: &SharedString, cx: &App) -> Hsla {
-    let mut palette = cx
-        .global::<PaletteStore>()
-        .0
-        .lock()
-        .expect("取色盘锁中毒");
+    let mut palette = cx.global::<PaletteStore>().0.lock().expect("取色盘锁中毒");
     palette.color_for(name.as_ref())
 }
 
