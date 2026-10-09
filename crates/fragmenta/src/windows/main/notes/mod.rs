@@ -4,9 +4,11 @@
 //! 订阅（`InputEvent::Change` / `Event::Changed`）时拉取的页字段快照；
 //! 页面 Entity 常驻于 shell，切换页面时筛选与滚动状态天然保留。
 //!
-//! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 对话框），
-//! 视图构建（筛选栏 / 卡片 / 空态 / render）见 `view.rs`。
+//! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 对话框 / 分类标签表单会话），
+//! 视图构建（筛选栏 / 卡片 / 空态 / render）见 `view.rs`，
+//! 分类与标签编辑表单（Popover 内容）见 `taxonomy_form.rs`。
 
+mod taxonomy_form;
 mod view;
 
 use fragmenta_core::model::{Note, NoteFilter, SearchScope};
@@ -35,13 +37,27 @@ pub struct NotesPage {
     selected_tags: Vec<String>,
     /// 列表快照：查询失败时存错误信息（错误占位 + 重试）。
     list: Result<Vec<Note>, String>,
-    /// 筛选选项快照（分类 / 标签下拉与右键菜单的数据源）。
+    /// 筛选选项快照（分类 / 标签下拉的数据源）。
     categories: Vec<String>,
     tags: Vec<String>,
+    /// 当前打开的分类与标签编辑表单会话（同一时刻至多一个）。
+    taxonomy_form: Option<TaxonomyForm>,
     /// 重命名对话框 key 序号：每次打开生成全新 InputState，免受上次编辑值残留。
     rename_seq: usize,
     _query_sub: Subscription,
     _changed_sub: Subscription,
+}
+
+/// 分类与标签编辑表单会话（note-taxonomy-form spec）。
+///
+/// 随 Popover 打开而创建、关闭而整体释放：两个输入框为本次打开的全新
+/// 实体（不同卡片 / 多次打开互不残留），回车订阅随会话 drop 自动退订。
+pub struct TaxonomyForm {
+    note_id: i64,
+    category_input: Entity<InputState>,
+    tag_input: Entity<InputState>,
+    _category_sub: Subscription,
+    _tag_sub: Subscription,
 }
 
 impl NotesPage {
@@ -71,6 +87,7 @@ impl NotesPage {
             list: Ok(Vec::new()),
             categories: Vec::new(),
             tags: Vec::new(),
+            taxonomy_form: None,
             rename_seq: 0,
             _query_sub: query_sub,
             _changed_sub: changed_sub,
@@ -92,6 +109,18 @@ impl NotesPage {
         // 选项查询失败按空处理：列表错误已单独占位呈现
         self.categories = store.categories().unwrap_or_default();
         self.tags = store.tags().unwrap_or_default();
+        // 表单所属笔记已不在列表（如打开期间被删除）时结束会话，
+        // 释放输入实体与回车订阅；卡片随列表消失，Popover 无处挂载。
+        if let Some(form) = self.taxonomy_form.as_ref() {
+            let id = form.note_id;
+            let visible = self
+                .list
+                .as_ref()
+                .is_ok_and(|notes| notes.iter().any(|note| note.id == id));
+            if !visible {
+                self.taxonomy_form = None;
+            }
+        }
         cx.notify();
     }
 
@@ -169,5 +198,116 @@ impl NotesPage {
                     }
                 })
         });
+    }
+
+    /// 打开分类与标签表单会话：两个全新输入框 + 回车订阅（经
+    /// `Window::subscribe`，回车回调可拿 window 以清空输入框）。
+    ///
+    /// 逐条即时保存：回车即落库并广播 `Changed`（列表与表单随刷新同步），
+    /// 输入框清空以便连续录入；空白回车不产生数据、仅清空。
+    fn open_taxonomy_form(&mut self, note_id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let category_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("输入分类，回车保存"));
+        let tag_input = cx.new(|cx| InputState::new(window, cx).placeholder("输入标签，回车保存"));
+
+        let weak = cx.entity().downgrade();
+        let weak_category = weak.clone();
+        let category_sub =
+            window.subscribe(&category_input, cx, move |input, event, window, app| {
+                if !matches!(event, InputEvent::PressEnter { .. }) {
+                    return;
+                }
+                let value = input.read(app).value().to_string();
+                let _ = weak_category.update(app, |this, cx| {
+                    this.save_taxonomy_category(note_id, &value, cx)
+                });
+                input.update(app, |state, cx| state.set_value("", window, cx));
+            });
+
+        let weak_tag = weak.clone();
+        let tag_sub = window.subscribe(&tag_input, cx, move |input, event, window, app| {
+            if !matches!(event, InputEvent::PressEnter { .. }) {
+                return;
+            }
+            let value = input.read(app).value().to_string();
+            let _ = weak_tag.update(app, |this, cx| this.add_taxonomy_tag(note_id, &value, cx));
+            input.update(app, |state, cx| state.set_value("", window, cx));
+        });
+
+        // 覆盖旧会话（若残存）：旧订阅随 drop 退订，旧输入实体随之释放
+        self.taxonomy_form = Some(TaxonomyForm {
+            note_id,
+            category_input,
+            tag_input,
+            _category_sub: category_sub,
+            _tag_sub: tag_sub,
+        });
+        cx.notify();
+    }
+
+    /// 关闭表单会话：订阅随 drop 退订，输入实体释放，卡片回到纯按钮形态。
+    fn close_taxonomy_form(&mut self, note_id: i64, cx: &mut Context<Self>) {
+        if self
+            .taxonomy_form
+            .as_ref()
+            .is_some_and(|form| form.note_id == note_id)
+        {
+            self.taxonomy_form = None;
+            cx.notify();
+        }
+    }
+
+    /// 分类回车保存：单值语义，非空输入替换旧分类。
+    fn save_taxonomy_category(&mut self, note_id: i64, value: &str, cx: &mut Context<Self>) {
+        let value = value.trim();
+        if value.is_empty() {
+            return;
+        }
+        self.notes
+            .update(cx, |s, cx| s.set_category(note_id, Some(value), cx));
+    }
+
+    /// 标签回车保存：多值语义，追加到现有标签之后（重复时不落库，输入框仍清空）。
+    fn add_taxonomy_tag(&mut self, note_id: i64, value: &str, cx: &mut Context<Self>) {
+        let value = value.trim();
+        if value.is_empty() {
+            return;
+        }
+        let Some(mut tags) = self.note_tags(note_id) else {
+            return;
+        };
+        if tags.iter().any(|tag| tag == value) {
+            return;
+        }
+        tags.push(value.to_string());
+        self.notes.update(cx, |s, cx| s.set_tags(note_id, tags, cx));
+    }
+
+    /// 点击分类 Tag：清除分类。
+    fn remove_taxonomy_category(&mut self, note_id: i64, cx: &mut Context<Self>) {
+        self.notes
+            .update(cx, |s, cx| s.set_category(note_id, None, cx));
+    }
+
+    /// 点击标签 Tag：从现有标签中移除该标签。
+    fn remove_taxonomy_tag(&mut self, note_id: i64, tag: &str, cx: &mut Context<Self>) {
+        let Some(mut tags) = self.note_tags(note_id) else {
+            return;
+        };
+        if tags.iter().all(|existing| existing != tag) {
+            return;
+        }
+        tags.retain(|existing| existing != tag);
+        self.notes.update(cx, |s, cx| s.set_tags(note_id, tags, cx));
+    }
+
+    /// 列表快照中该笔记的当前标签（表单打开期间笔记必在列表中）。
+    fn note_tags(&self, note_id: i64) -> Option<Vec<String>> {
+        self.list
+            .as_ref()
+            .ok()?
+            .iter()
+            .find(|note| note.id == note_id)
+            .map(|note| note.tags.clone())
     }
 }

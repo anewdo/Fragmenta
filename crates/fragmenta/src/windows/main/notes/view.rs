@@ -10,7 +10,7 @@ use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::{ContextMenu, ContextMenuExt, DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, Size, h_flex, v_flex};
@@ -126,7 +126,7 @@ impl NotesPage {
             })
     }
 
-    /// 单张笔记卡片：标题行 + 摘要 + 分类 / 标签徽片 + 右键菜单 + 删除确认。
+    /// 单张笔记卡片：标题行 + 摘要 + 分类 / 标签徽片 + 分类标签表单弹层 + 删除确认。
     fn note_card(
         &self,
         note: &Note,
@@ -135,7 +135,7 @@ impl NotesPage {
         border: Hsla,
         muted: Hsla,
         accent: Hsla,
-    ) -> ContextMenu<Stateful<Div>> {
+    ) -> Stateful<Div> {
         let note_id = note.id;
         let title = if note.title.is_empty() {
             "无标题".to_string()
@@ -146,13 +146,6 @@ impl NotesPage {
         let created = note.created_at.format("%Y-%m-%d %H:%M").to_string();
         let extra_tags = note.tags.len().saturating_sub(CARD_TAG_LIMIT);
 
-        // 右键菜单数据：全量分类 / 标签选项 + 该笔记当前归属（checked 态）
-        let weak_menu = weak.clone();
-        let categories = self.categories.clone();
-        let all_tags = self.tags.clone();
-        let note_category = note.category.clone();
-        let note_tags = note.tags.clone();
-
         v_flex()
             .id(("note-card", note_id as u64))
             .gap_1p5()
@@ -162,58 +155,7 @@ impl NotesPage {
             .border_1()
             .border_color(border)
             .hover(move |style| style.border_color(accent))
-            .context_menu(move |mut menu, _, _| {
-                // 分类：唯一、可清除（"无分类" = 清除）
-                menu = menu.label("分类").item({
-                    let weak = weak_menu.clone();
-                    PopupMenuItem::new("无分类")
-                        .checked(note_category.is_none())
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.notes
-                                    .update(cx, |s, cx| s.set_category(note_id, None, cx));
-                            });
-                        })
-                });
-                for cat in &categories {
-                    let weak = weak_menu.clone();
-                    let cat = cat.clone();
-                    let checked = note_category.as_deref() == Some(cat.as_str());
-                    menu = menu.item(PopupMenuItem::new(cat.as_str()).checked(checked).on_click(
-                        move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.notes
-                                    .update(cx, |s, cx| s.set_category(note_id, Some(&cat), cx));
-                            });
-                        },
-                    ));
-                }
-                // 标签：多选切换（点击后菜单关闭，重开继续；Changed 驱动刷新）
-                menu = menu.separator().label("标签");
-                if all_tags.is_empty() {
-                    menu = menu.label("暂无标签");
-                }
-                for tag in &all_tags {
-                    let weak = weak_menu.clone();
-                    let mut next = note_tags.clone();
-                    let had = next.iter().any(|t| t == tag);
-                    if had {
-                        next.retain(|t| t != tag);
-                    } else {
-                        next.push(tag.clone());
-                    }
-                    menu = menu.item(PopupMenuItem::new(tag.as_str()).checked(had).on_click(
-                        move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.notes
-                                    .update(cx, |s, cx| s.set_tags(note_id, next.clone(), cx));
-                            });
-                        },
-                    ));
-                }
-                menu
-            })
-            // 标题行：标题 + 创建时间 + 删除
+            // 标题行：标题 + 创建时间 + 分类标签表单 + 删除
             .child(
                 h_flex()
                     .items_center()
@@ -233,6 +175,7 @@ impl NotesPage {
                             .text_color(muted)
                             .child(created),
                     )
+                    .child(self.taxonomy_popover(note, weak))
                     .child(
                         Button::new(("note-delete", note_id as u64))
                             .ghost()

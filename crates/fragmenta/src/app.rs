@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use fragmenta_core::db::Db;
 use fragmenta_core::media::Images;
@@ -14,6 +15,7 @@ use gpui_kit::component::{Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{App, AppContext, Entity, Global, QuitMode, WindowAppearance, px};
 
 use crate::hotkey::HotkeyController;
+use crate::utils::palette::ColorPalette;
 use crate::state::NotesState;
 use crate::windows;
 
@@ -26,6 +28,12 @@ impl Global for NotesStore {}
 pub(crate) struct ImageStore(pub(crate) Images);
 
 impl Global for ImageStore {}
+
+/// 名字取色器（note-taxonomy-form）：卡片徽片与分类标签表单共用同一映射，
+/// 保证同屏同名同色；进程内稳定，不持久化。
+pub(crate) struct PaletteStore(pub(crate) Mutex<ColorPalette>);
+
+impl Global for PaletteStore {}
 
 /// exe 所在目录；`settings.json` / `imgs/` 的锚点。
 fn exe_dir() -> PathBuf {
@@ -73,6 +81,7 @@ fn init_stores(settings: &Settings, cx: &mut App) {
     let notes = cx.new(|_| NotesState::new(Arc::new(db)));
     cx.set_global(NotesStore(notes));
     cx.set_global(ImageStore(Images::new(exe_dir().join("imgs"))));
+    cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
 }
 
 /// 按 `Settings` 初始化主题：模式（Auto 解析为当前系统外观，桥接收敛于
