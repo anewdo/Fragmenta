@@ -2,7 +2,7 @@
 //!
 //! 光标 DPI 定位（`window_bounds` 语义见架构 §9 条目 5）、置顶切换
 //! （PopUp 默认 `WS_EX_TOPMOST`，取消须 `SetWindowPos`）、圆角窗口区域、
-//! 八向边缘 resize 的 hit-test 子类化（api-notes §2）。
+//! 鼠标拖拽边缘缩放（接管窗口消息处理实现，见 [`install_edge_subclass`]）。
 
 #[cfg(windows)]
 use std::collections::HashMap;
@@ -134,8 +134,7 @@ pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
     {
         use windows_sys::Win32::Foundation::{POINT, RECT};
         use windows_sys::Win32::Graphics::Gdi::{
-            CreateRectRgn, CreateRoundRectRgn, DeleteObject, GetRgnBox, GetWindowRgn,
-            ScreenToClient, SetWindowRgn,
+            CreateRoundRectRgn, DeleteObject, ScreenToClient, SetWindowRgn,
         };
         use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
@@ -174,34 +173,6 @@ pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
                 return false;
             }
             let result = SetWindowRgn(hwnd as _, hrgn, 1);
-            // 临时诊断：三层尺寸 + 设置结果 + 系统实际持有的区域
-            // （定位圆角左右不对称问题，验证后移除）
-            let probe = CreateRectRgn(0, 0, 0, 0);
-            if !probe.is_null() {
-                let complexity = GetWindowRgn(hwnd as _, probe);
-                let mut bbox: RECT = std::mem::zeroed();
-                GetRgnBox(probe, &mut bbox);
-                DeleteObject(probe);
-                let viewport = window.viewport_size();
-                eprintln!(
-                    "[tile-rgn] window=({},{}) {}x{} client_origin=({ox},{oy}) client={}x{} \
-                     viewport={:.1}x{:.1} win_scale={:.3} dpi_scale={scale:.3} d={d} \
-                     set={result} eff={complexity} bbox=({},{})-({},{})",
-                    window_rect.left,
-                    window_rect.top,
-                    window_rect.right - window_rect.left,
-                    window_rect.bottom - window_rect.top,
-                    client_rect.right,
-                    client_rect.bottom,
-                    viewport.width.as_f32(),
-                    viewport.height.as_f32(),
-                    window.scale_factor(),
-                    bbox.left,
-                    bbox.top,
-                    bbox.right,
-                    bbox.bottom,
-                );
-            }
             if result == 0 {
                 // 设置失败时区域所有权未移交，须自行销毁
                 DeleteObject(hrgn);
@@ -217,7 +188,8 @@ pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
     }
 }
 
-/// 磁贴边缘子类化登记项：原 wndproc（链回 gpui）与热区参数（逻辑像素）。
+/// 边缘感应登记项：`orig` 为 gpui 原本的窗口消息处理函数（未被拦截的
+/// 消息转发回它），`edge` / `corner` 为感应区尺寸（逻辑像素）。
 #[cfg(windows)]
 struct EdgeSubclass {
     orig: WNDPROC,
@@ -225,14 +197,17 @@ struct EdgeSubclass {
     corner: f32,
 }
 
-/// 已子类化窗口登记表（HWND → 登记项）；WM_NCDESTROY 时移除。
+/// 已接管消息处理的窗口登记表（HWND → 登记项）；窗口销毁（WM_NCDESTROY）
+/// 时移除，防止句柄被系统复用后误用已失效的旧函数指针。
 #[cfg(windows)]
 static EDGE_SUBCLASSES: LazyLock<Mutex<HashMap<isize, EdgeSubclass>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// 八向边缘命中测试：命中返回 HT\* 码，未命中（含窗口矩形读取失败）返回 None。
+/// 八向边缘命中测试：光标落在感应区内返回对应 `HT*` 部位码，否则（含窗口
+/// 矩形读取失败）返回 None，交回默认处理。
 ///
-/// `edge` / `corner` 为逻辑像素热区参数，按窗口当前 DPI 换算为物理像素。
+/// `edge` 为四边感应宽度、`corner` 为四角感应边长（逻辑像素），按窗口当前
+/// DPI 换算为物理像素后与 `GetWindowRect` 的物理坐标比较。
 #[cfg(windows)]
 unsafe fn edge_hit_test(hwnd: HWND, lparam: LPARAM, edge: f32, corner: f32) -> Option<u32> {
     use windows_sys::Win32::Foundation::RECT;
@@ -281,12 +256,11 @@ unsafe fn edge_hit_test(hwnd: HWND, lparam: LPARAM, edge: f32, corner: f32) -> O
     })
 }
 
-/// 子类 wndproc：WM_NCHITTEST 补齐八向边缘命中，其余消息链回 gpui 原 wndproc。
+/// 接管后的窗口消息处理函数：只处理 `WM_NCHITTEST`（系统询问"光标处算
+/// 窗口哪个部位"），对八向边缘命中返回对应 `HT*` 部位码；其余消息一律
+/// 转发给 gpui 原处理函数，行为不变。
 ///
-/// 返回 HT\* 后系统接管：按下转为 WM_NCLBUTTONDOWN，gpui 后端对八个边缘码
-/// 透传 `DefWindowProcW` 进入原生 resize 模态循环（期间 WM_ENTERSIZEMOVE
-/// 的 timer 泵维持绘制），WM_SIZE 走与普通窗口 resize 相同的后端路径，
-/// 视口 / 渲染面 / 圆角区域重设全部经既有机制同步闭环。
+/// 返回部位码之后的缩放流程见 [`install_edge_subclass`] 注释。
 #[cfg(windows)]
 unsafe extern "system" fn tile_edge_proc(
     hwnd: HWND,
@@ -298,12 +272,12 @@ unsafe extern "system" fn tile_edge_proc(
         CallWindowProcW, DefWindowProcW, WM_NCDESTROY, WM_NCHITTEST,
     };
 
-    // 取参即放锁：后续 CallWindowProcW 链上的模态循环会同步重入本 proc，
-    // 持锁等待会死锁
+    // 查表后立即放锁：缩放循环进行期间，系统会在同一线程上再次进入本函数
+    // 处理后续消息；若一直持锁，重入的那次会等待锁释放而卡死
     let key = hwnd as isize;
     let info = EDGE_SUBCLASSES
         .lock()
-        .expect("磁贴子类化表锁中毒")
+        .expect("边缘感应登记表锁状态异常")
         .get(&key)
         .map(|info| (info.orig, info.edge, info.corner));
     let Some((orig, edge, corner)) = info else {
@@ -318,18 +292,32 @@ unsafe extern "system" fn tile_edge_proc(
     if msg == WM_NCDESTROY {
         EDGE_SUBCLASSES
             .lock()
-            .expect("磁贴子类化表锁中毒")
+            .expect("边缘感应登记表锁状态异常")
             .remove(&key);
     }
     unsafe { CallWindowProcW(orig, hwnd, msg, wparam, lparam) }
 }
 
-/// 安装八向边缘 resize 的 hit-test 子类化（每窗口幂等；非 Windows 返回 false）。
+/// 启用鼠标拖拽边缘缩放（每窗口幂等；非 Windows 返回 false）。
 ///
-/// 框架在隐藏标题栏时只把顶边映射为 resize 边（api-notes §2.3），本子类化
-/// 把窗口外缘八向命中全部补齐；最小尺寸由 `WindowOptions::window_min_size`
-/// 经后端 WM_GETMINMAXINFO 原生钳制，无需应用层参与。`edge` 为边缘热区宽、
-/// `corner` 为角部热区边长（逻辑像素）。
+/// 背景：gpui 窗口默认自带缩放能力，叠加圆角裁剪后四个角上鼠标
+/// 毫无响应，整体感应范围也偏窄。本函数接管窗口消息处理，把外缘八向
+/// 全部纳入感应区并放宽范围。`edge` 为四边感应宽度、`corner` 为四角
+/// 感应边长（逻辑像素）。
+///
+/// 拖拽缩放的完整流程：
+/// 1. 本函数把窗口消息处理函数替换为 [`tile_edge_proc`]，gpui 原处理
+///    函数存入登记表，未被拦截的消息由它转发回去；
+/// 2. 鼠标移动时系统先发 `WM_NCHITTEST` 询问"光标处算窗口哪个部位"，
+///    `tile_edge_proc` 对外缘八向命中返回对应 `HT*` 部位码（四角优先）；
+/// 3. 在感应区内按下鼠标，系统按部位码发 `WM_NCLBUTTONDOWN`，拦截 gpui 后端
+///    的边缘部位码处理，直接交回系统默认逻辑；
+/// 4. 系统进入原生拖拽缩放循环：缩放光标与画面刷新全部由系统与 gpui
+///    既有机制托管（后端在循环期间用定时器持续绘制），松开鼠标即结束；
+/// 5. 循环中的每次尺寸变化经 `WM_SIZE` 走 gpui 与普通窗口相同的同步
+///    路径，视口、渲染表面、圆角区域（`observe_window_bounds`）自动跟随；
+/// 6. 最小尺寸由 `WindowOptions::window_min_size` 声明，系统在循环中经
+///    `WM_GETMINMAXINFO` 直接钳制，应用层无需参与。
 pub fn install_edge_subclass(window: &mut Window, edge: f32, corner: f32) -> bool {
     #[cfg(windows)]
     {
@@ -338,13 +326,13 @@ pub fn install_edge_subclass(window: &mut Window, edge: f32, corner: f32) -> boo
         let Some(hwnd_isize) = hwnd_of(window) else {
             return false;
         };
-        let mut map = EDGE_SUBCLASSES.lock().expect("磁贴子类化表锁中毒");
+        let mut map = EDGE_SUBCLASSES.lock().expect("边缘感应登记表锁状态异常");
         if map.contains_key(&hwnd_isize) {
             return true;
         }
         let hwnd = hwnd_isize as HWND;
         let proc: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT = tile_edge_proc;
-        // prev = gpui 原 wndproc（非空函数指针；0 表示设置失败）
+        // 返回值为 gpui 原消息处理函数（0 表示替换失败）
         let prev = unsafe { SetWindowLongPtrW(hwnd, GWLP_WNDPROC, proc as usize as isize) };
         if prev == 0 {
             return false;

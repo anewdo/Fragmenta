@@ -87,12 +87,12 @@ struct MainShell {
 }
 
 impl MainShell {
-    fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             page: Page::Home,
             sidebar_collapsed: false,
             home: cx.new(|_| HomePage),
-            notes: cx.new(|_| NotesPage),
+            notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|_| TodosPage),
             settings: cx.new(|_| SettingsPage),
         }

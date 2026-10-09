@@ -112,6 +112,32 @@ impl NotesState {
         self.db.notes(filter)
     }
 
+    /// read-through：全部分类名（按名称排序）。
+    pub fn categories(&self) -> DbResult<Vec<String>> {
+        self.db.categories()
+    }
+
+    /// read-through：全部被引用的标签名（按名称排序）。
+    pub fn tags(&self) -> DbResult<Vec<String>> {
+        self.db.tags()
+    }
+
+    /// 重命名分类；成功后广播 `Changed`（列表与筛选选项跟随刷新）。
+    ///
+    /// 返回结果供调用方呈现错误（源不存在 / 目标重名）。
+    pub fn rename_category(
+        &mut self,
+        from: &str,
+        to: &str,
+        cx: &mut Context<Self>,
+    ) -> DbResult<()> {
+        let result = self.db.rename_category(from, to);
+        if result.is_ok() {
+            cx.emit(Event::Changed);
+        }
+        result
+    }
+
     /// 取出该槽并落库，返回结果；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。
     fn flush(&mut self, key: &NoteKey, cx: &mut Context<Self>) -> Option<SaveStatus> {
         let write = self.pending.remove(key)?;

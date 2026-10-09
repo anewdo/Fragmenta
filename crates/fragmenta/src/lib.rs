@@ -7,5 +7,6 @@ pub mod app;
 pub mod editor;
 pub mod hotkey;
 pub mod state;
+pub mod widgets;
 pub mod win32;
 pub mod windows;
