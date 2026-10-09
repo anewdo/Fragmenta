@@ -1,3 +1,9 @@
 /target
-
+**/tests/**
+.scratch/
 /temp
+
+docs/reference/
+docs/plans/
+docs/experiences/
+docs/progress/
