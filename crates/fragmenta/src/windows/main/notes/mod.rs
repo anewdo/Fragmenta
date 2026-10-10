@@ -145,8 +145,7 @@ impl NotesPage {
 
     /// 切换编辑器模式。
     pub fn set_editor_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
-        self.editor
-            .update(cx, |editor, cx| editor.set_mode(mode, cx));
+        self.editor.update(cx, |editor, cx| editor.set_mode(mode, cx));
     }
 
     /// 选中卡片 → 编辑器载入（Phase 10）。

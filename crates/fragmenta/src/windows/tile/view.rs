@@ -15,7 +15,7 @@ use crate::win32;
 use super::{CORNER, open_new};
 
 /// 边缘热区条宽（逻辑像素）：WM_NCHITTEST 子类化的命中带宽。
-const EDGE_HOT: f32 = 5.;
+const EDGE_HOT: f32 = 6.5;
 /// 角部热区边长（逻辑像素）：对角 resize 命中区。
 const CORNER_HOT: f32 = 14.;
 

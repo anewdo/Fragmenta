@@ -126,8 +126,8 @@ pub fn set_topmost(window: &mut Window, topmost: bool) -> bool {
 ///
 /// 无边框 PopUp 窗口原生为直角；圆角半径按逻辑像素传入。几何取
 /// `GetClientRect` 物理真值（不走 viewport 换算，杜绝舍入漂移），并经
-/// `ScreenToClient` 把客户区原点换算到窗口坐标系（PopUp 无边框时为
-/// (0,0)，带边框窗口也正确）。区域所有权移交系统，设置失败时由本函数
+/// `ScreenToClient` 把客户区原点换算到窗口坐标系，沿可见客户区裁剪。
+/// 区域所有权移交系统，设置失败时由本函数
 /// 负责销毁。尺寸 / scale 变化后调用方须重设（经 `observe_window_bounds`）。
 pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
     #[cfg(windows)]
@@ -160,12 +160,12 @@ pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
         let scale = unsafe { GetDpiForWindow(hwnd as _) } as f32 / 96.;
         let d = (radius * scale).round() as i32 * 2;
         unsafe {
-            // GDI 区域右/下边界排他：[ox, ox + w) 恰好覆盖全部客户区
+            // CreateRoundRectRgn 的右/下端点须加 1，才能保留客户区最后一列与一行。
             let hrgn = CreateRoundRectRgn(
                 ox,
                 oy,
-                ox + client_rect.right,
-                oy + client_rect.bottom,
+                ox + client_rect.right + 1,
+                oy + client_rect.bottom + 1,
                 d,
                 d,
             );
@@ -207,24 +207,31 @@ static EDGE_SUBCLASSES: LazyLock<Mutex<HashMap<isize, EdgeSubclass>>> =
 /// 矩形读取失败）返回 None，交回默认处理。
 ///
 /// `edge` 为四边感应宽度、`corner` 为四角感应边长（逻辑像素），按窗口当前
-/// DPI 换算为物理像素后与 `GetWindowRect` 的物理坐标比较。
+/// DPI 换算为物理像素后，在圆角裁剪使用的客户区内比较。
 #[cfg(windows)]
 unsafe fn edge_hit_test(hwnd: HWND, lparam: LPARAM, edge: f32, corner: f32) -> Option<u32> {
-    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
     use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
+        GetClientRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
         HTTOPRIGHT,
     };
 
     let mut rect: RECT = unsafe { std::mem::zeroed() };
-    if unsafe { GetWindowRect(hwnd, &mut rect) } == 0 {
+    let mut cursor = POINT {
+        x: (lparam & 0xFFFF) as i16 as i32,
+        y: ((lparam >> 16) & 0xFFFF) as i16 as i32,
+    };
+    // 圆角区域沿客户区裁剪，感应条也沿同一范围定位。
+    if unsafe { GetClientRect(hwnd, &mut rect) } == 0
+        || unsafe { ScreenToClient(hwnd, &mut cursor) } == 0
+    {
         return None;
     }
-    // 窗口外的点交回默认处理（命中测试也会被捕获期间等路径问到）
-    let x = (lparam & 0xFFFF) as i16 as i32;
-    let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
-    if x < rect.left || x > rect.right || y < rect.top || y > rect.bottom {
+    // 客户区外的点交回默认处理（命中测试也会被捕获期间等路径问到）
+    let (x, y) = (cursor.x, cursor.y);
+    if x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom {
         return None;
     }
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.;
@@ -256,9 +263,8 @@ unsafe fn edge_hit_test(hwnd: HWND, lparam: LPARAM, edge: f32, corner: f32) -> O
     })
 }
 
-/// 接管后的窗口消息处理函数：只处理 `WM_NCHITTEST`（系统询问"光标处算
-/// 窗口哪个部位"），对八向边缘命中返回对应 `HT*` 部位码；其余消息一律
-/// 转发给 gpui 原处理函数，行为不变。
+/// 接管后的窗口消息处理函数：八向边缘命中、移动与按下交由系统处理，
+/// 内容区和标题栏拖拽消息转发给 gpui 原处理函数。
 ///
 /// 返回部位码之后的缩放流程见 [`install_edge_subclass`] 注释。
 #[cfg(windows)]
@@ -269,7 +275,8 @@ unsafe extern "system" fn tile_edge_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, DefWindowProcW, WM_NCDESTROY, WM_NCHITTEST,
+        CallWindowProcW, DefWindowProcW, HTBOTTOMRIGHT, HTLEFT, WM_NCDESTROY, WM_NCHITTEST,
+        WM_NCLBUTTONDOWN, WM_NCMOUSEMOVE,
     };
 
     // 查表后立即放锁：缩放循环进行期间，系统会在同一线程上再次进入本函数
@@ -289,6 +296,13 @@ unsafe extern "system" fn tile_edge_proc(
     {
         return hit as LRESULT;
     }
+    // gpui 会把非客户区鼠标消息转为内容输入；边缘移动与按下须交给系统，
+    // 保持缩放光标，并让输入框旁的边缘也能进入原生缩放循环。
+    if matches!(msg, WM_NCMOUSEMOVE | WM_NCLBUTTONDOWN)
+        && (HTLEFT..=HTBOTTOMRIGHT).contains(&(wparam as u32))
+    {
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    }
     if msg == WM_NCDESTROY {
         EDGE_SUBCLASSES
             .lock()
@@ -300,10 +314,8 @@ unsafe extern "system" fn tile_edge_proc(
 
 /// 启用鼠标拖拽边缘缩放（每窗口幂等；非 Windows 返回 false）。
 ///
-/// 背景：gpui 窗口默认自带缩放能力，叠加圆角裁剪后四个角上鼠标
-/// 毫无响应，整体感应范围也偏窄。本函数接管窗口消息处理，把外缘八向
-/// 全部纳入感应区并放宽范围。`edge` 为四边感应宽度、`corner` 为四角
-/// 感应边长（逻辑像素）。
+/// 感应范围沿圆角裁剪使用的可见客户区定位，覆盖四边与四角。
+/// `edge` 为四边感应宽度，`corner` 为四角感应边长（逻辑像素）。
 ///
 /// 拖拽缩放的完整流程：
 /// 1. 本函数把窗口消息处理函数替换为 [`tile_edge_proc`]，gpui 原处理
