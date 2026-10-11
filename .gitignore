@@ -1,7 +1,9 @@
 /target
 **/tests/**
 .scratch/
-/temp
+temp/
+
+AGENTS.md
 
 docs/reference/
 docs/plans/

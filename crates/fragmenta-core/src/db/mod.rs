@@ -41,6 +41,9 @@ pub enum DbError {
     /// 库中日期不符合 YYYY-MM-DD。
     #[error("库中日期损坏：{0}")]
     CorruptDate(String),
+    /// 库中待办的时间区间列非法（部分空置或超出 0–1439 分钟范围）。
+    #[error("库中时间区间损坏：待办 {0}")]
+    CorruptInterval(i64),
     /// 文件系统错误（建目录 / 打开文件）。
     #[error("IO 错误：{0}")]
     Io(#[from] std::io::Error),

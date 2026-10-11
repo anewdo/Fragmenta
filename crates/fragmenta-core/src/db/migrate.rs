@@ -31,9 +31,10 @@ CREATE TABLE note_tags (
 );
 CREATE TABLE todos (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  title      TEXT NOT NULL,
-  detail     TEXT NOT NULL DEFAULT '',
+  content    TEXT NOT NULL,
   date       TEXT NOT NULL,                    -- YYYY-MM-DD
+  start_min  INTEGER,                         -- 自午夜分钟数 0–1439；与 end_min 同 NULL 或同非 NULL
+  end_min    INTEGER,
   done       INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -42,7 +43,7 @@ CREATE INDEX idx_notes_updated ON notes(updated_at DESC);
 CREATE INDEX idx_todos_date ON todos(date);
 ";
 
-/// 读取文件版本并按需推进迁移；版本过新直接报错，库文件保持不动。
+/// 读取文件版本并按需推进；版本过新直接报错，库文件保持不动。
 pub(super) fn run(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current > SCHEMA_VERSION {
@@ -55,10 +56,7 @@ pub(super) fn run(conn: &mut Connection) -> Result<()> {
         return Ok(());
     }
     let tx = conn.transaction()?;
-    // 版本逐级推进（当前仅有 v1，直接建全量）
-    if current < 1 {
-        tx.execute_batch(V1)?;
-    }
+    tx.execute_batch(V1)?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
