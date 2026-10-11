@@ -96,7 +96,7 @@ impl MainShell {
             sidebar_collapsed: false,
             home: cx.new(|_| HomePage),
             notes: cx.new(|cx| NotesPage::new(window, cx)),
-            todos: cx.new(|_| TodosPage),
+            todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(|_| SettingsPage),
         }
     }

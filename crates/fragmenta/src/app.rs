@@ -15,7 +15,7 @@ use gpui_kit::component::{Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{App, AppContext, Entity, Global, QuitMode, WindowAppearance, px};
 
 use crate::hotkey::HotkeyController;
-use crate::state::NotesState;
+use crate::state::{NotesState, TodosState};
 use crate::utils::palette::ColorPalette;
 use crate::windows;
 
@@ -23,6 +23,11 @@ use crate::windows;
 pub(crate) struct NotesStore(pub(crate) Entity<NotesState>);
 
 impl Global for NotesStore {}
+
+/// App 级共享待办 store（D3）：待办页持有；全部操作同步落库。
+pub(crate) struct TodosStore(pub(crate) Entity<TodosState>);
+
+impl Global for TodosStore {}
 
 /// 图片图库（D6：`imgs/` 固定在 exe 旁，与 `data_dir` 无关）。
 pub(crate) struct ImageStore(pub(crate) Images);
@@ -78,8 +83,11 @@ fn init_stores(settings: &Settings, cx: &mut App) {
             std::process::exit(1);
         }
     };
-    let notes = cx.new(|_| NotesState::new(Arc::new(db)));
+    let db = Arc::new(db);
+    let notes = cx.new(|_| NotesState::new(db.clone()));
+    let todos = cx.new(|_| TodosState::new(db));
     cx.set_global(NotesStore(notes));
+    cx.set_global(TodosStore(todos));
     cx.set_global(ImageStore(Images::new(exe_dir().join("imgs"))));
     cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
 }
