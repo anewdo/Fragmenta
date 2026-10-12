@@ -17,7 +17,7 @@ pub struct SourceText {
 }
 
 impl SourceText {
-    /// 创建组件。`images` 为图库（应用层固定注入 `{exe_dir}/imgs`）；
+    /// 创建组件。`images` 为图库（应用层注入 `{data_dir}/imgs`）；
     /// `placeholder` 为空内容占位文案。
     pub fn new<T: 'static>(
         images: Images,

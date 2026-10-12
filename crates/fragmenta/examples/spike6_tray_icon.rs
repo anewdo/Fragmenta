@@ -233,10 +233,13 @@ fn handle_event(event: SpikeEvent, cx: &mut App) {
 }
 
 fn notify_view(cx: &mut App) {
-    if let Some(view) = cx.global::<SpikeState>().view.clone() {
-        if let Some(view) = view.upgrade() {
-            view.update(cx, |_, cx| cx.notify());
-        }
+    if let Some(view) = cx
+        .global::<SpikeState>()
+        .view
+        .clone()
+        .and_then(|view| view.upgrade())
+    {
+        view.update(cx, |_, cx| cx.notify());
     }
 }
 

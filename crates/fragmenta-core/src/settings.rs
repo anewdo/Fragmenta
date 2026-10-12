@@ -28,7 +28,7 @@ pub enum FontScale {
 pub struct Settings {
     pub theme: ThemeMode,
     pub font_scale: FontScale,
-    /// 数据目录（数据库所在），默认 {exe_dir}/data，可迁移。
+    /// 数据目录（数据库与图片图库平铺于其内），默认 {exe_dir}/data，可迁移。
     pub data_dir: PathBuf,
     /// 磁贴呼出热键，如 "ctrl+alt+n"。
     pub tile_hotkey: String,

@@ -1,7 +1,8 @@
 //! 启动编排（架构 §3 / §5.7 / D3 / D6）：assets、主题、共享 store、热键与主窗口。
 //!
-//! 运行期产物位于 exe 同级：`settings.json`、`imgs/`；数据库在
-//! `Settings.data_dir`（默认 exe 旁 `data/`）下。进程常驻（`QuitMode::Explicit`），
+//! 运行期产物：exe 同级仅 `settings.json`（数据目录定位的唯一线索，D6 / ADR-0004）；
+//! 数据库与图片图库平铺于 `Settings.data_dir`（默认 exe 旁 `data/`，内含
+//! `fragmenta.db` 与 `imgs/`）。进程常驻（`QuitMode::Explicit`），
 //! 显式退出入口在设置页。
 
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ pub(crate) struct TodosStore(pub(crate) Entity<TodosState>);
 
 impl Global for TodosStore {}
 
-/// 图片图库（D6：`imgs/` 固定在 exe 旁，与 `data_dir` 无关）。
+/// 图片图库（D6 修订：`imgs/` 平铺于 `data_dir` 内，随迁移整体走）。
 pub(crate) struct ImageStore(pub(crate) Images);
 
 impl Global for ImageStore {}
@@ -40,7 +41,7 @@ pub(crate) struct PaletteStore(pub(crate) Mutex<ColorPalette>);
 
 impl Global for PaletteStore {}
 
-/// exe 所在目录；`settings.json` / `imgs/` 的锚点。
+/// exe 所在目录；`settings.json` 的锚点（数据目录线索唯一入口）。
 fn exe_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
@@ -88,7 +89,7 @@ fn init_stores(settings: &Settings, cx: &mut App) {
     let todos = cx.new(|_| TodosState::new(db));
     cx.set_global(NotesStore(notes));
     cx.set_global(TodosStore(todos));
-    cx.set_global(ImageStore(Images::new(exe_dir().join("imgs"))));
+    cx.set_global(ImageStore(Images::new(settings.data_dir.join("imgs"))));
     cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
 }
 

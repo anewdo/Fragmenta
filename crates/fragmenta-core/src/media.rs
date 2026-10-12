@@ -1,6 +1,6 @@
 //! 图片图库：内容哈希命名去重与 `imgs/` 引用解析（架构 §5.4 / §8 / D6）。
 //!
-//! 图库物理目录由构造注入（应用层固定传 `{exe_dir}/imgs`，不随 data_dir 迁移变化）；
+//! 图库物理目录由构造注入（应用层传 `{data_dir}/imgs`，随数据目录整体迁移）；
 //! 正文中的引用统一为 `imgs/{name}` 逻辑前缀，解析规则与渲染插件（架构 §8）一致。
 
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ pub enum MediaError {
 
 pub type Result<T> = std::result::Result<T, MediaError>;
 
-/// 图片图库（架构 D6：`imgs/` 固定于 exe 旁，与 data_dir 无关）。
+/// 图片图库（架构 D6 修订：`imgs/` 平铺于 `data_dir` 内）。
 #[derive(Debug, Clone)]
 pub struct Images {
     base: PathBuf,
