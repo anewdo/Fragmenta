@@ -87,6 +87,8 @@ mod imp {
 
         Ok(TrayIconBuilder::new()
             .with_menu(Box::new(menu))
+            // 默认 true：左键也会弹菜单；关闭后左键只发 Click 事件
+            .with_menu_on_left_click(false)
             .with_tooltip("Fragmenta")
             .with_icon(placeholder_icon()?)
             .build()?)
