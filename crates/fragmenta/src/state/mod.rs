@@ -3,9 +3,11 @@
 //! 防抖计时、落库、事件广播收在 store 内部（D4）；读路径 read-through 无缓存（D5）。
 
 pub mod notes;
+pub mod settings;
 pub mod todos;
 
 pub use notes::NotesState;
+pub use settings::{SettingsEvent, SettingsState};
 pub use todos::{TodosEvent, TodosState};
 
 use fragmenta_core::model::Note;

@@ -32,6 +32,8 @@ pub struct Settings {
     pub data_dir: PathBuf,
     /// 磁贴呼出热键，如 "ctrl+alt+n"。
     pub tile_hotkey: String,
+    /// 关闭主窗口时直接退出；默认 false（托盘驻留，架构 §5.8）。
+    pub close_to_quit: bool,
 }
 
 impl Default for Settings {
@@ -41,6 +43,7 @@ impl Default for Settings {
             font_scale: FontScale::default(),
             data_dir: default_data_dir(),
             tile_hotkey: default_tile_hotkey(),
+            close_to_quit: false,
         }
     }
 }

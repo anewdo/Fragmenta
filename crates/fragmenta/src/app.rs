@@ -16,9 +16,9 @@ use gpui_kit::component::{Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{App, AppContext, Entity, Global, QuitMode, WindowAppearance, px};
 
 use crate::hotkey::HotkeyController;
-use crate::state::{NotesState, TodosState};
+use crate::state::{NotesState, SettingsState, TodosState};
 use crate::utils::palette::ColorPalette;
-use crate::windows;
+use crate::{tray, windows};
 
 /// App 级共享笔记 store（D3）：主窗口与全部磁贴持有同一 handle。
 pub(crate) struct NotesStore(pub(crate) Entity<NotesState>);
@@ -29,6 +29,11 @@ impl Global for NotesStore {}
 pub(crate) struct TodosStore(pub(crate) Entity<TodosState>);
 
 impl Global for TodosStore {}
+
+/// App 级设置 store：运行期设置修改的唯一入口（D8 副作用集中）。
+pub(crate) struct SettingsStore(pub(crate) Entity<SettingsState>);
+
+impl Global for SettingsStore {}
 
 /// 图片图库（D6 修订：`imgs/` 平铺于 `data_dir` 内，随迁移整体走）。
 pub(crate) struct ImageStore(pub(crate) Images);
@@ -51,7 +56,8 @@ fn exe_dir() -> PathBuf {
 
 /// 应用入口；`main.rs` 仅调用此函数。
 pub fn run() {
-    let settings = Settings::load(&exe_dir().join("settings.json")).unwrap_or_else(|err| {
+    let settings_path = exe_dir().join("settings.json");
+    let settings = Settings::load(&settings_path).unwrap_or_else(|err| {
         eprintln!("[fragmenta] 读取设置失败，使用默认设置: {err}");
         Settings::default()
     });
@@ -60,15 +66,28 @@ pub fn run() {
         .run(move |cx| {
             gpui_kit::init(cx);
             apply_theme(&settings, cx);
-            // 进程常驻（spike ⑤ 结论）：末窗关闭不退出，显式退出走设置页
+            // 进程常驻（spike ⑤ 结论）：末窗关闭不退出，退出走统一退出路径
             cx.set_quit_mode(QuitMode::Explicit);
             init_stores(&settings, cx);
+            let settings_state = cx.new(|_| {
+                SettingsState::new(settings.clone(), settings_path.clone())
+            });
+            cx.set_global(SettingsStore(settings_state));
             match HotkeyController::init(&settings.tile_hotkey, cx) {
                 Ok(controller) => cx.set_global(controller),
                 Err(err) => eprintln!("[fragmenta] 磁贴热键注册失败: {err}"),
             }
+            tray::init(cx);
             windows::main::open(cx);
         });
+}
+
+/// 统一退出路径（架构 §5.8 / §5.11）：全部退出（托盘菜单 / 显式按钮 /
+/// close_to_quit 关窗）前置 `flush_all` 落库，再 `cx.quit()` 完全退出。
+pub(crate) fn quit_flushing(cx: &mut App) {
+    let notes = cx.global::<NotesStore>().0.clone();
+    notes.update(cx, |state, cx| state.flush_all(cx));
+    cx.quit();
 }
 
 /// 建立 App 级共享 store：数据库连接 + 图库。

@@ -6,6 +6,7 @@
 pub mod app;
 pub mod editor;
 pub mod hotkey;
+pub mod tray;
 
 pub mod state;
 pub mod utils;

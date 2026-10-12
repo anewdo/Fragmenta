@@ -91,6 +91,16 @@ struct MainShell {
 
 impl MainShell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 主窗口关闭语义（架构 §5.8）：close_to_quit 开 → 统一退出路径
+        // （flush_all + 完全退出）；关（默认）→ 窗口关闭但进程托盘驻留
+        // （QuitMode::Explicit），热键照常呼出磁贴，托盘可再开主窗口。
+        window.on_window_should_close(cx, |_, cx| {
+            let settings = cx.global::<crate::app::SettingsStore>().0.clone();
+            if settings.read(cx).close_to_quit() {
+                crate::app::quit_flushing(cx);
+            }
+            true
+        });
         Self {
             page: Page::Home,
             sidebar_collapsed: false,

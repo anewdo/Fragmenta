@@ -1,39 +1,62 @@
-//! 设置页：Phase 13 实装主题 / 字号 / 热键 / 数据迁移 / 导出；
-//! Phase 8 起提供常驻进程的显式退出入口（spike ⑤ 定案的退出路径归宿）。
+//! 设置页（架构 §5.8 / §5.11）：Phase 13 分组实装，kit `Settings` 组件承载。
+//!
+//! 本阶段交付"系统"组：关闭主窗口时直接退出（默认关 = 托盘驻留）与
+//! 显式退出按钮（Phase 8 占位移入，spike ⑤ 定案的退出路径归宿）。
+//! 外观 / 快捷键 / 数据组由后续 ticket 落地。
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings};
+use gpui_kit::component::{Sizable, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::NotesStore;
+use crate::app::{SettingsStore, quit_flushing};
 
 /// 设置页视图：常驻于主窗口 shell。
 pub struct SettingsPage;
 
 impl Render for SettingsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .child(
-                div()
-                    .text_size(px(20.))
-                    .text_color(cx.theme().foreground.opacity(0.4))
-                    .child("设置"),
-            )
-            .child(
-                Button::new("quit")
-                    .label("退出 Fragmenta")
-                    .danger()
-                    .on_click(|_, _, cx| {
-                        // 退出前把全部 pending 防抖内容同步落库，避免丢失最后 300ms 输入
-                        let notes = cx.global::<NotesStore>().0.clone();
-                        notes.update(cx, |state, cx| state.flush_all(cx));
-                        cx.quit();
-                    }),
-            )
+            .p_6()
+            .child(Settings::new("fragmenta-settings").pages(vec![SettingPage::new("设置")
+                .default_open(true)
+                .group(
+                    SettingGroup::new()
+                        .title("系统")
+                        .items(vec![
+                            SettingItem::new(
+                                "关闭主窗口时直接退出",
+                                SettingField::switch(
+                                    |cx: &App| {
+                                        cx.global::<SettingsStore>()
+                                            .0
+                                            .read(cx)
+                                            .close_to_quit()
+                                    },
+                                    |val: bool, cx: &mut App| {
+                                        let settings = cx.global::<SettingsStore>().0.clone();
+                                        settings.update(cx, |state, cx| {
+                                            state.set_close_to_quit(val, cx)
+                                        });
+                                    },
+                                )
+                                .default_value(false),
+                            )
+                            .description("默认关闭：关闭主窗口后驻留系统托盘，热键呼出磁贴不受影响"),
+                            SettingItem::new(
+                                "退出应用",
+                                SettingField::render(|options, _window, _cx| {
+                                    Button::new("quit")
+                                        .label("退出 Fragmenta")
+                                        .danger()
+                                        .with_size(options.size())
+                                        .on_click(|_, _, cx| quit_flushing(cx))
+                                }),
+                            )
+                            .description("退出前未保存内容自动落库"),
+                        ]),
+                )]))
     }
 }
