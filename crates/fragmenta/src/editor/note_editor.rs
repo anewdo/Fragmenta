@@ -25,8 +25,8 @@ use gpui_kit::*;
 
 use super::image_path::ImagePathPlugin;
 use super::source::SourceText;
-use crate::app::{ImageStore, NotesStore};
-use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus};
+use crate::app::{ImageStore, NotesStore, SettingsStore};
+use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus, SettingsEvent};
 use crate::widgets::ResizableSplit;
 
 /// 编辑器模式（架构 §5.9）。
@@ -67,6 +67,8 @@ pub struct NoteEditor {
     _title_sub: Subscription,
     _word_sub: Subscription,
     _saved_sub: Subscription,
+    /// 正文字号档变化 → 源文 / 预览随 content_font_px 重渲染。
+    _settings_sub: Subscription,
 }
 
 impl NoteEditor {
@@ -100,6 +102,12 @@ impl NoteEditor {
             }
         });
 
+        // 订阅矩阵（§5.6）：正文字号变化 → 源文 / 预览重渲染（content_font_px）
+        let settings = cx.global::<SettingsStore>().0.clone();
+        let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
+            cx.notify();
+        });
+
         Self {
             note_id: None,
             notes,
@@ -112,6 +120,7 @@ impl NoteEditor {
             _title_sub: title_sub,
             _word_sub: word_sub,
             _saved_sub: saved_sub,
+            _settings_sub: settings_sub,
         }
     }
 
@@ -214,6 +223,12 @@ impl Render for NoteEditor {
                 theme.danger,
             )
         };
+        // 内容阅读面：源文 / 预览正文随正文字号档缩放
+        let content_px = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .content_font_px();
 
         // 空态：未选中笔记
         let Some(_) = self.note_id else {
@@ -285,7 +300,14 @@ impl Render for NoteEditor {
             .min_w_0()
             .bg(background)
             .child(title_row)
-            .child(div().flex_1().min_h_0().min_w_0().child(body))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .text_size(content_px)
+                    .child(body),
+            )
             .child(
                 h_flex()
                     .flex_shrink_0()

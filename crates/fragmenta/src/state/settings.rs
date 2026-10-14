@@ -1,13 +1,21 @@
 //! 设置状态（架构 §5.6 / D8 副作用集中）：运行期 `Settings` 的唯一权威副本，
 //! 修改即持久化（settings.json，ADR-0004 锚点）。
 //!
-//! Phase 13 ticket 08 先落地 `close_to_quit`；主题 / 字号 / 热键 / 数据目录
-//! 等后续 ticket 在此扩展（`set_theme` / `set_font_scale` / …）。
+//! 主题模式的解析与应用（含 Auto 系统外观桥接）收敛于此：构造时应用一次
+//! （启动期唯一入口），此后每次修改即时生效于全部存活窗口
+//! （`Theme::change` 内部 `refresh_windows`，含已开磁贴）。
+//!
+//! 字号档位不写全局主题：kit 组件几何按 16px rem 基准设计，全局放大
+//! 会使 px 固定几何组件（日历等）文字溢出。字号只作用于内容阅读面，
+//! 由各内容组件经 [`SettingsState::content_font_px`] 显式应用。
 
 use std::path::PathBuf;
 
-use fragmenta_core::settings::Settings;
-use gpui_kit::{Context, EventEmitter};
+use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
+use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
+use gpui_kit::{Context, EventEmitter, Pixels, Subscription, Window, WindowAppearance, px};
+
+use crate::app::SettingsStore;
 
 /// 设置变更广播：订阅方（设置页等）据此刷新展示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,11 +29,41 @@ impl EventEmitter<SettingsEvent> for SettingsState {}
 pub struct SettingsState {
     settings: Settings,
     path: PathBuf,
+    /// Auto 桥接监听：每个存活窗口登记一次，窗口关闭订阅自然失效，
+    /// 新窗口打开时重新登记（见 [`SettingsState::attach_appearance_bridge`]）。
+    appearance_subscriptions: Vec<Subscription>,
 }
 
 impl SettingsState {
-    pub fn new(settings: Settings, path: PathBuf) -> Self {
-        Self { settings, path }
+    /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
+    pub fn new(settings: Settings, path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let mut state = Self {
+            settings,
+            path,
+            appearance_subscriptions: Vec::new(),
+        };
+        state.apply_theme_mode(cx);
+        state
+    }
+
+    /// 当前主题模式。
+    pub fn theme(&self) -> ThemeMode {
+        self.settings.theme
+    }
+
+    /// 当前字号档位。
+    pub fn font_scale(&self) -> FontScale {
+        self.settings.font_scale
+    }
+
+    /// 内容阅读面（笔记列表 / 编辑器与预览 / 待办清单 / 磁贴标题与正文）
+    /// 的正文字号：内容组件在容器上 `.text_size()` 应用，文字沿元素树继承。
+    pub fn content_font_px(&self) -> Pixels {
+        match self.settings.font_scale {
+            FontScale::Small => px(14.),
+            FontScale::Medium => px(16.),
+            FontScale::Large => px(18.),
+        }
     }
 
     /// 关闭主窗口时直接退出；默认 false（托盘驻留）。
@@ -33,16 +71,85 @@ impl SettingsState {
         self.settings.close_to_quit
     }
 
+    /// 更新主题模式并立即生效于全部存活窗口（含已开磁贴），持久化 + 广播。
+    pub fn set_theme(&mut self, mode: ThemeMode, cx: &mut Context<Self>) {
+        if self.settings.theme == mode {
+            return;
+        }
+        self.settings.theme = mode;
+        self.apply_theme_mode(cx);
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新字号档位：持久化 + 广播（订阅的内容组件据此重渲染生效）。
+    pub fn set_font_scale(&mut self, scale: FontScale, cx: &mut Context<Self>) {
+        if self.settings.font_scale == scale {
+            return;
+        }
+        self.settings.font_scale = scale;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
     /// 更新"关闭主窗口时直接退出"并立即持久化。
-    /// 持久化失败不中断交互（eprintln 容错，与项目现状一致）。
     pub fn set_close_to_quit(&mut self, value: bool, cx: &mut Context<Self>) {
         if self.settings.close_to_quit == value {
             return;
         }
         self.settings.close_to_quit = value;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 窗口创建时登记 Auto 桥接（主窗口与磁贴各自调用）：
+    /// 先按窗口当前外观校准一次（覆盖无窗口期间系统深浅色变化），
+    /// 再挂接本窗口的系统外观监听；窗口关闭订阅自然失效。
+    pub fn attach_appearance_bridge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_auto_mode(window.appearance(), cx);
+        self.appearance_subscriptions
+            .push(window.observe_window_appearance(|window, cx| {
+                let store = cx.global::<SettingsStore>().0.clone();
+                store.update(cx, |state, cx| {
+                    state.sync_auto_mode(window.appearance(), cx);
+                });
+            }));
+    }
+
+    /// Auto 桥接：主题模式为 Auto 时跟随系统外观切换 kit 主题；
+    /// 其余模式不受系统变化影响。已处于目标模式时跳过（多窗口监听去重）。
+    fn sync_auto_mode(&mut self, appearance: WindowAppearance, cx: &mut Context<Self>) {
+        if self.settings.theme != ThemeMode::Auto {
+            return;
+        }
+        let mode = kit_mode_of(appearance);
+        if cx.theme().mode != mode {
+            Theme::change(mode, None, cx);
+        }
+    }
+
+    /// 按设置应用主题模式：Auto 解析为当前系统外观（App 级，无窗口期同样可解析）。
+    fn apply_theme_mode(&mut self, cx: &mut Context<Self>) {
+        let mode = match self.settings.theme {
+            ThemeMode::Light => KitThemeMode::Light,
+            ThemeMode::Dark => KitThemeMode::Dark,
+            ThemeMode::Auto => kit_mode_of(cx.window_appearance()),
+        };
+        Theme::change(mode, None, cx);
+    }
+
+    /// 持久化到 settings.json；失败不中断交互（eprintln 容错，与项目现状一致）。
+    fn persist(&self) {
         if let Err(err) = self.settings.save(&self.path) {
             eprintln!("[fragmenta] 保存设置失败: {err}");
         }
-        cx.emit(SettingsEvent::Changed);
+    }
+}
+
+/// 系统外观 → kit 主题模式（Auto 解析规则，spike ③ 结论）。
+fn kit_mode_of(appearance: WindowAppearance) -> KitThemeMode {
+    match appearance {
+        WindowAppearance::Dark | WindowAppearance::VibrantDark => KitThemeMode::Dark,
+        _ => KitThemeMode::Light,
     }
 }

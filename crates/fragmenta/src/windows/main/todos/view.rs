@@ -31,6 +31,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{TodoForm, TodosPage};
+use crate::app::SettingsStore;
 
 /// Dialog 表单内容：内容输入 + 「指定时间区间」勾选 + 起止时间（勾选时显示）。
 ///
@@ -281,6 +282,12 @@ impl Render for TodosPage {
                 theme.primary_foreground,
             )
         };
+        // 内容阅读面：清单条目随正文字号档缩放（日历与辅助小字保持固定）
+        let content_px = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .content_font_px();
 
         // 标题行：图标 + 标题 + 「今天」/「新建」
         let header = h_flex()
@@ -387,6 +394,7 @@ impl Render for TodosPage {
                 .px_3()
                 .py_2()
                 .overflow_y_scrollbar()
+                .text_size(content_px)
                 .children(todos.iter().map(|todo| {
                     self.todo_item(
                         todo,

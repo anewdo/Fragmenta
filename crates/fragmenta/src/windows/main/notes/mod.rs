@@ -21,9 +21,9 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::NotesStore;
+use crate::app::{NotesStore, SettingsStore};
 use crate::editor::{EditorMode, NoteEditor};
-use crate::state::{Event, NoteKey, NotesState};
+use crate::state::{Event, NoteKey, NotesState, SettingsEvent};
 
 /// 笔记页视图：筛选栏 + 卡片列表，常驻于主窗口 shell。
 pub struct NotesPage {
@@ -51,6 +51,8 @@ pub struct NotesPage {
     rename_seq: usize,
     _query_sub: Subscription,
     _changed_sub: Subscription,
+    /// 正文字号档变化 → 列表标题与摘要随 content_font_px 重渲染。
+    _settings_sub: Subscription,
 }
 
 /// 分类与标签编辑表单会话（note-taxonomy-form spec）。
@@ -82,6 +84,11 @@ impl NotesPage {
                 this.refresh(cx);
             }
         });
+        // 订阅矩阵（§5.6）：正文字号变化 → 列表重渲染（content_font_px）
+        let settings = cx.global::<SettingsStore>().0.clone();
+        let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
+            cx.notify();
+        });
 
         let mut this = Self {
             notes,
@@ -98,6 +105,7 @@ impl NotesPage {
             rename_seq: 0,
             _query_sub: query_sub,
             _changed_sub: changed_sub,
+            _settings_sub: settings_sub,
         };
         this.refresh(cx);
         this

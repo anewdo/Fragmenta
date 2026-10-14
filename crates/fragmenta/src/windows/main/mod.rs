@@ -72,6 +72,9 @@ pub fn open(cx: &mut App) {
         ..Default::default()
     };
     match gpui_kit::open_window(options, cx, |window, cx| {
+        // Auto 主题桥接：本窗口登记系统外观监听（SettingsState 内收敛，D8）
+        let settings = cx.global::<crate::app::SettingsStore>().0.clone();
+        settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
         cx.new(|cx| MainShell::new(window, cx))
     }) {
         Ok((handle, _)) => cx.set_global(MainWindow(handle)),
@@ -107,7 +110,7 @@ impl MainShell {
             home: cx.new(|_| HomePage),
             notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|cx| TodosPage::new(window, cx)),
-            settings: cx.new(|_| SettingsPage),
+            settings: cx.new(SettingsPage::new),
         }
     }
 

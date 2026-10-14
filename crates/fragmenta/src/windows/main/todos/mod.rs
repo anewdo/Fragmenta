@@ -18,8 +18,8 @@ use gpui_kit::component::time_field::TimeFieldState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::TodosStore;
-use crate::state::{TodosEvent, TodosState};
+use crate::app::{SettingsStore, TodosStore};
+use crate::state::{SettingsEvent, TodosEvent, TodosState};
 
 /// 新建 / 编辑共用的 Dialog 表单（每次打开为全新实体，对话框关闭即释放）。
 ///
@@ -59,6 +59,8 @@ pub struct TodosPage {
     list: Result<Vec<Todo>, String>,
     _calendar_sub: Subscription,
     _changed_sub: Subscription,
+    /// 正文字号档变化 → 清单条目随 content_font_px 重渲染。
+    _settings_sub: Subscription,
 }
 
 impl TodosPage {
@@ -84,6 +86,11 @@ impl TodosPage {
                 this.refresh(cx);
             }
         });
+        // 订阅矩阵（§5.6）：正文字号变化 → 清单重渲染（content_font_px）
+        let settings = cx.global::<SettingsStore>().0.clone();
+        let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
+            cx.notify();
+        });
 
         let mut this = Self {
             todos,
@@ -92,6 +99,7 @@ impl TodosPage {
             list: Ok(Vec::new()),
             _calendar_sub: calendar_sub,
             _changed_sub: changed_sub,
+            _settings_sub: settings_sub,
         };
         this.refresh(cx);
         this

@@ -7,9 +7,9 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::{ImageStore, NotesStore};
+use crate::app::{ImageStore, NotesStore, SettingsStore};
 use crate::editor::SourceText;
-use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus};
+use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus, SettingsEvent};
 use crate::win32;
 
 use super::{CORNER, open_new};
@@ -48,6 +48,8 @@ pub(super) struct TileView {
     _word_sub: Subscription,
     _saved_sub: Subscription,
     _bounds_sub: Subscription,
+    /// 正文字号档变化 → 标题 / 正文随 content_font_px 重渲染。
+    _settings_sub: Subscription,
 }
 
 impl TileView {
@@ -100,6 +102,12 @@ impl TileView {
             this.refresh_rounded_region(window);
         });
 
+        // 订阅矩阵（§5.6）：正文字号变化 → 标题 / 正文重渲染（content_font_px）
+        let settings = cx.global::<SettingsStore>().0.clone();
+        let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
+            cx.notify();
+        });
+
         // 焦点落正文：热键呼出后立即输入
         let focus = source.textarea().read(cx).focus_handle(cx);
         window.focus(&focus, cx);
@@ -117,6 +125,7 @@ impl TileView {
             _word_sub: word_sub,
             _saved_sub: saved_sub,
             _bounds_sub: bounds_sub,
+            _settings_sub: settings_sub,
         }
     }
 
@@ -234,6 +243,12 @@ impl Render for TileView {
                 theme.danger,
             )
         };
+        // 内容阅读面：标题 / 正文随正文字号档缩放（辅助小字保持固定）
+        let content_px = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .content_font_px();
 
         // 保存状态文案（兼拖拽区内容；区域内无交互元素，§9 条目 2）
         let status_label = match self.status {
@@ -333,6 +348,7 @@ impl Render for TileView {
                     .h_9()
                     .items_center()
                     .overflow_hidden()
+                    .text_size(content_px)
                     .border_b_1()
                     .border_color(border)
                     .child(Input::new(&self.title).appearance(false).px(px(10.))),
@@ -341,6 +357,7 @@ impl Render for TileView {
                 div()
                     .flex_1()
                     .min_h_0()
+                    .text_size(content_px)
                     .child(self.source.element().appearance(false).h_full()),
             )
             .child(

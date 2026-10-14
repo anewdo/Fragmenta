@@ -18,6 +18,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
+use crate::app::SettingsStore;
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
 /// 卡片标签徽片上限：超过仅显示前 3 个 + "+N" 计数。
@@ -256,6 +257,12 @@ impl Render for NotesPage {
                 theme.danger,
             )
         };
+        // 内容阅读面：列表标题 / 摘要随正文字号档缩放（辅助小字保持固定）
+        let content_px = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .content_font_px();
 
         // 行 1：搜索框 + 范围切换（标题 / 全文，selected 态分段）
         let search_row = h_flex()
@@ -384,6 +391,7 @@ impl Render for NotesPage {
                 .px_3()
                 .py_2()
                 .overflow_y_scrollbar()
+                .text_size(content_px)
                 .children(notes.iter().map(|note| {
                     let selected = self.selected == Some(note.id);
                     self.note_card(note, selected, &weak, card_bg, border, muted, accent)

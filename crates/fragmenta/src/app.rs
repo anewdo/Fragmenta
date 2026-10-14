@@ -11,9 +11,8 @@ use std::sync::Mutex;
 
 use fragmenta_core::db::Db;
 use fragmenta_core::media::Images;
-use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
-use gpui_kit::component::{Theme, ThemeMode as KitThemeMode};
-use gpui_kit::{App, AppContext, Entity, Global, QuitMode, WindowAppearance, px};
+use fragmenta_core::settings::Settings;
+use gpui_kit::{App, AppContext, Entity, Global, QuitMode};
 
 use crate::hotkey::HotkeyController;
 use crate::state::{NotesState, SettingsState, TodosState};
@@ -65,14 +64,14 @@ pub fn run() {
         .with_assets(gpui_kit::assets::AllAssets::new(""))
         .run(move |cx| {
             gpui_kit::init(cx);
-            apply_theme(&settings, cx);
             // 进程常驻（spike ⑤ 结论）：末窗关闭不退出，退出走统一退出路径
             cx.set_quit_mode(QuitMode::Explicit);
-            init_stores(&settings, cx);
-            let settings_state = cx.new(|_| {
-                SettingsState::new(settings.clone(), settings_path.clone())
+            // 设置 store 构造即应用主题与字号（D8 副作用集中，无启动期双轨）
+            let settings_state = cx.new(|cx| {
+                SettingsState::new(settings.clone(), settings_path.clone(), cx)
             });
             cx.set_global(SettingsStore(settings_state));
+            init_stores(&settings, cx);
             match HotkeyController::init(&settings.tile_hotkey, cx) {
                 Ok(controller) => cx.set_global(controller),
                 Err(err) => eprintln!("[fragmenta] 磁贴热键注册失败: {err}"),
@@ -110,24 +109,4 @@ fn init_stores(settings: &Settings, cx: &mut App) {
     cx.set_global(TodosStore(todos));
     cx.set_global(ImageStore(Images::new(settings.data_dir.join("imgs"))));
     cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
-}
-
-/// 按 `Settings` 初始化主题：模式（Auto 解析为当前系统外观，桥接收敛于
-/// Phase 13 SettingsState）与字号档位（Medium 即 kit 默认 16px）。
-fn apply_theme(settings: &Settings, cx: &mut App) {
-    let mode = match settings.theme {
-        ThemeMode::Light => KitThemeMode::Light,
-        ThemeMode::Dark => KitThemeMode::Dark,
-        ThemeMode::Auto => match cx.window_appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => KitThemeMode::Dark,
-            _ => KitThemeMode::Light,
-        },
-    };
-    Theme::change(mode, None, cx);
-    let font_size = match settings.font_scale {
-        FontScale::Small => px(14.),
-        FontScale::Medium => px(16.),
-        FontScale::Large => px(18.),
-    };
-    Theme::update(cx, |theme| theme.font_size = font_size);
 }
