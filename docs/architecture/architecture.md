@@ -1,7 +1,7 @@
 # Fragmenta 架构设计
 
-> 状态：定案（2026-10-05；2026-10-06 spike 结论回写）
-> 技术基线：Rust (edition 2024) · gpui-kit 0.7.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · Windows 10/11
+> 状态：定案（2026-10-05；2026-10-06 spike 结论回写；2026-10-12 设置页定案回写）
+> 技术基线：Rust (edition 2024) · gpui-kit 0.7.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
 > 形态：单进程多窗口桌面应用，无后台服务，轻量低内存
 > 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 分类 / 标签）
 
@@ -19,18 +19,26 @@
 
 左侧可收缩导航栏（首页 / 笔记 / 待办 / 设置）：
 
-- **首页**：月历（存在笔记或待办的日期有视觉指示，指示样式从候选方案中人工挑选）+ 选中日期的待办列表（可 Check）；首页定位为浏览 + 勾选，唯一写操作是待办 Check，新增 / 编辑 / 删除都在各自页面完成
+- **首页**：内容待定（原"月历 + 选中日待办"方案随 Phase 12 废弃，占位页维持现状）
 - **笔记**：两栏布局、分界线可拖动
   - 左栏：搜索筛选（标题 / 全文 / 分类 / 标签）+ 笔记卡片列表（标题、创建时间、摘要、分类、标签最多 3 个；右键菜单设置分类与标签，分类唯一、标签可多；卡片右端垃圾桶图标删除，带确认）
   - 右栏：Markdown 编辑器（Source / Preview / Split 三模式），支持图片
-- **待办**：待办项完整增删改
-- **设置**：主题、字号、数据存储路径、数据迁移、导出 md、磁贴呼出热键、显式退出（spike ⑤ 定案：`QuitMode::Explicit` 全窗口关闭进程驻留，退出按钮前置 `flush_all` 后 `cx.quit()` 完全退出）
+- **待办**：左侧月历选日（初始选中今日）+ 右侧选中日清单；标题行提供「今天」跳回与「新建」；新建 / 编辑共用 Dialog 表单（内容必填，可选「指定时间区间」，`end <= start` 拒绝、不支持跨天）；圆形 check 勾选完成（完成后内容与区间均加删除线）；hover 出编辑 / 删除按钮（删除无确认）；选中日无待办时空态提示
+- **设置**（四组）：
+  - 外观：主题（Light / Dark / Auto / 内置色系主题，ADR-0005）、字号三档
+  - 快捷键：磁贴呼出热键（捕获式录入；冲突红字不落库；不允许清空）
+  - 数据：数据目录与迁移、导出 md
+  - 系统：开机自启动（默认关）、关闭主窗口时直接退出（默认关，默认托盘驻留）、显式退出按钮（spike ⑤ 定案：`QuitMode::Explicit` 全窗口关闭进程驻留，退出前置 `flush_all` 后 `cx.quit()`）
+
+### 常驻与托盘
+
+进程常驻（`QuitMode::Explicit`）。托盘图标常驻（`tray-icon` crate，kit / gpui 无托盘能力）：左键 = 打开主窗口，右键菜单 = 打开主窗口 / 退出。主窗口关闭的默认语义为托盘驻留——热键呼出磁贴不受影响；设置开启"关闭主窗口时直接退出"后，关主窗口即 `flush_all` 落库后完全退出。开机自启动走注册表 `HKCU\...\Run` 键（写入 `"{exe}" --silent`）；带 `--silent` 参数启动为静默启动——不打开主窗口、仅托盘驻留；手动启动不静默。
 
 ### 数据
 
 - **笔记**：来源为磁贴与主界面两处
 - **待办**：仅来源于主界面"待办"页
-- SQLite 持久化，默认位于 exe 同级 `data/` 目录
+- SQLite 与图片图库平铺于 `data_dir`（默认 exe 旁 `data/`，内含 `fragmenta.db` 与 `imgs/`），整体随迁移；`settings.json` 固定 exe 旁，是定位 `data_dir` 的唯一线索（ADR-0004）
 
 ## 2. 总体分层
 
@@ -50,7 +58,7 @@ flowchart TB
         DB["db — SQLite 全部 SQL 与迁移"]
         MDL["model — 领域类型"]
         SET["settings — settings.json + 路径解析"]
-        MED["media — 图片（exe 旁 imgs/）"]
+        MED["media — 图片（data_dir 下 imgs/）"]
         EXP["export — 导出 .md"]
     end
 
@@ -101,7 +109,7 @@ Fragmenta/
         windows/
           main/               # mod.rs（shell+路由）/ home.rs / notes/ / todos.rs / settings.rs
           tile/               # 磁贴
-  （运行时产物位于 exe 同级：settings.json、data/fragmenta.db、imgs/；开发期在 target/debug/ 下）
+  （运行时产物：exe 旁仅 settings.json；data_dir（默认 exe 旁 data/）下平铺 fragmenta.db 与 imgs/；开发期在 target/debug/ 下）
 ```
 
 state 层不独立成 crate：它依赖 gpui，且消费者只有 app 一个，crate 边界划在 core / app 之间即可。
@@ -113,7 +121,7 @@ state 层不独立成 crate：它依赖 gpui，且消费者只有 app 一个，c
 - **D3 共享数据模块 = App 级 Entity**：`NotesState` / `TodosState` / `SettingsState` 启动时创建一次，主窗口与全部磁贴持有同一 handle。gpui Entity 是应用级的，磁贴保存后事件广播，主窗口列表与日历自动刷新。
 - **D4 写路径防抖收在 store 内部**：防抖定时、落库、事件广播都在 `save()` 实现里；磁贴与主界面编辑器共用同一份防抖实现，按笔记身份独立计时（`HashMap<NoteKey, PendingWrite>`，见 ADR-0001）；调用方接口保持一个方法。
 - **D5 读路径 read-through 无缓存**：本地 SQLite 亚毫秒查询，`Changed` 事件触发页面重拉，省去缓存一致性维护。
-- **D6 三个存储位置各司其职**：`settings.json` 固定在 exe 旁；`data_dir`（默认 exe 旁 `data/`）存数据库、可迁移；`imgs/` 固定在 exe 旁、与 `data_dir` 无关。
+- **D6 两个存储位置各司其职**：`settings.json` 固定在 exe 旁，是启动时定位 `data_dir` 的唯一线索（便携锚点，ADR-0004，禁止注册表 / %APPDATA% 存线索）；`data_dir`（默认 exe 旁 `data/`）存数据库与图片图库——`fragmenta.db` 与 `imgs/` 平铺于其内、整体随迁移（ADR-0006）。
 - **D7 主窗口单例 / 磁贴多开**：`windows::main::open` 幂等（已开则激活既有窗口）；`windows::tile::open_new` 每次新窗口。
 - **D8 副作用集中**：设置变更的持久化、主题/字号应用、热键重注册集中在 `SettingsState::apply` 系列；主题/字号应用后经 `App::refresh_windows()` 广播至全部存活窗口（磁贴即时换肤）；热键事件路由集中在 `HotkeyController`。
 - **D9 无 repository trait**：单 SQLite 实现，in-memory 连接即测试替身，不引入假设性抽象层。
@@ -159,10 +167,12 @@ impl Db {
 
 ```rust
 pub struct Settings {
-    pub theme: ThemeMode,        // Light | Dark | Auto
+    pub theme: ThemeMode,        // Light | Dark | Auto | 内置色系主题（ADR-0005，预设制、清单实施期候选挑选）
     pub font_scale: FontScale,   // Small | Medium | Large，映射 Theme.font_size
-    pub data_dir: PathBuf,       // 默认 {exe_dir}/data
-    pub tile_hotkey: String,     // 如 "ctrl+alt+n"
+    pub data_dir: PathBuf,       // 默认 {exe_dir}/data；内部平铺 fragmenta.db 与 imgs/
+    pub tile_hotkey: String,     // 如 "ctrl+alt+n"；不允许清空
+    pub autostart: bool,         // 开机自启动（注册表 Run，写入 --silent），默认 false
+    pub close_to_quit: bool,     // 关闭主窗口时直接退出，默认 false（托盘驻留）
 }
 
 impl Settings {
@@ -171,19 +181,19 @@ impl Settings {
 }
 ```
 
-`Auto` 经 spike ③ 验证保留：Windows 下 `observe_window_appearance` 可区分 Light/Dark 并在系统切换时回调。kit 主题不自动跟随系统外观（仅窗口外沿变化），Auto 实现为应用层桥接——监听外观回调后手动切换 kit 主题（机制见 §5.6）。
+`Auto` 经 spike ③ 验证保留：Windows 下 `observe_window_appearance` 可区分 Light/Dark 并在系统切换时回调。kit 主题不自动跟随系统外观（仅窗口外沿变化），Auto 实现为应用层桥接——监听外观回调后手动切换 kit 主题（机制见 §5.6）。色系主题为内置预设（整套分区域配色，覆盖背景 / 面板 / 标题栏 / 边框 / 前景 / 强调色等核心 token，其余继承 Light 基线），经 `Theme::update` 覆盖应用（ADR-0005）。
 
 ### 5.4 core::media
 
 ```rust
-pub struct Images { base: PathBuf }   // base = {exe_dir}/imgs，固定，不随 data_dir 变
+pub struct Images { base: PathBuf }   // base = {data_dir}/imgs，随 data_dir 迁移（D6）
 
 impl Images {
     pub fn new(base: PathBuf) -> Self;
     pub fn import(&self, bytes: &[u8], ext: &str) -> Result<String>;
     // 内容哈希命名去重，写入 base，返回相对引用 "imgs/{hash}.{ext}"
     pub fn resolve(&self, ref_path: &str) -> Option<PathBuf>;
-    // "imgs/.." -> {exe_dir}/imgs/..；绝对路径原样；其余返回 None
+    // "imgs/.." -> {data_dir}/imgs/..；绝对路径原样；其余返回 None
 }
 ```
 
@@ -244,12 +254,16 @@ impl SettingsState {
     // 持久化 + HotkeyController::rebind；注册失败则提示且不落库
     pub fn set_data_dir(&mut self, dir: PathBuf, cx: &mut Context<Self>);
     // 数据迁移编排，见下
+    pub fn set_autostart(&mut self, enabled: bool, cx: &mut Context<Self>);
+    // 持久化 + 注册表 HKCU\...\Run 写入/删除（"{exe}" --silent）；便携 exe 被移动后路径失效，开启时重写
+    pub fn set_close_to_quit(&mut self, enabled: bool, cx: &mut Context<Self>);
+    // 持久化；仅改变主窗口关闭语义（见 §5.8），无即时副作用
 }
 ```
 
-**Auto 主题桥接**（spike ③ 结论）：`observe_window_appearance` 回调 → 依外观 `Theme::global_mut` 切换 light/dark → `Theme::sync_base` + `App::refresh_windows()`。kit 主题不自动跟随系统外观，桥接逻辑收敛于 `SettingsState`（D8）。
+**Auto 主题桥接**（spike ③ 结论）：`observe_window_appearance` 回调 → 依外观 `Theme::global_mut` 切换 light/dark → `Theme::sync_base` + `App::refresh_windows()`。kit 主题不自动跟随系统外观，桥接逻辑收敛于 `SettingsState`（D8）。Auto 与色系主题互斥（枚举单选，ADR-0005）。
 
-**数据迁移流程**（`set_data_dir` 内编排；一致性走 SQLite backup API，禁止文件系统裸拷，见 ADR-0002）：校验新路径可写 → 在新路径建立全新连接、由旧连接 `backup_to` 在线备份 → `Db::open(新路径)` 试开 → 各 store 原子替换 `Arc<Db>` → `settings.save` → 广播 `Changed`。磁贴窗口持有 store handle，自动使用新连接；旧目录保留为 `.bak`。
+**数据迁移流程**（`set_data_dir` 内编排；一致性走 SQLite backup API，禁止文件系统裸拷，见 ADR-0002；布局与旧档处置见 ADR-0004 / ADR-0006）：前置 `flush_all` → 校验新路径可写 → 在新路径建立全新连接、由旧连接 `backup_to` 在线备份 → `Db::open(新路径)` 试开 → `imgs/` 图库文件随迁拷贝 → 各 store 与 `ImageStore` 原子替换 `Arc<Db>` / 图库根 → `settings.save` → 广播 `Changed`。磁贴窗口持有 store handle，自动使用新连接；旧目录改名留存为 `.bak`，不自动删除，用户确认后自行清理。
 
 ### 5.7 hotkey
 
@@ -267,6 +281,7 @@ impl HotkeyController {
 ### 5.8 windows
 
 - `main::open(cx)`：单例幂等，已开则激活；`MainShell` 持 `Page` 枚举路由，各页 Entity 常驻（切换保留筛选与滚动状态）；侧栏用 kit `Sidebar::collapsible(true)`
+- 主窗口关闭语义：`close_to_quit` 关（默认）→ 进程不退，托盘驻留（§5.11），再开走 `main::open` 重开；开 → `flush_all` 落库后 `cx.quit()` 完全退出
 - `tile::open_new(cx)`：每次新窗口；`WindowKind::PopUp` + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为——首开磁贴中心对准光标（空间不足时钳制完整可见）；场上已有磁贴时取创建时机最新的现存磁贴的**当前实际位置**（登记表存 `AnyWindowHandle`，经 `update` 取 `window.bounds()`，磁贴被挪动后新磁贴跟随其现位置）级联偏移 26 逻辑像素，并经 `cx.displays()` 反查其中心点所在显示器做钳制；场上磁贴全部关闭后重置为首开行为；定位须绑定 `display_id`（坐标语义见 §9 条目 5）
 - `tile::TileView`：顶栏中间不含交互元素的区域为拖拽移动区；标题与正文共处同一输入区（仅一条分隔线，与弹窗边缘零外距）；窗口尺寸经八向边缘热区拖拽调整（下限 240×280 逻辑像素——gpui 无无边框窗口的边缘 resize API，热区按下记录起始快照，`canvas` 的 paint 钩子每帧注册窗口级 mouse 流，从快照全量计算目标后经 Win32 `SetWindowPos` 物理像素通道一次到位，左 / 上向边缘锚定拖拽前的对侧缘）；圆角窗口区域按实际尺寸设置，并在窗口 bounds 变化时重设（`observe_window_bounds`）；关闭语义——空草稿直接丢弃，非空草稿先 `flush_now` 同步保存再关闭（草稿可弃，已落库不删）
 - 统一经 kit 门面 `gpui_kit::open_window` 开窗（自动包 `base::Root`，获得 overlay hosting——右键菜单 / Popover 依赖）
@@ -283,7 +298,11 @@ Markdown 编辑器组件，被笔记页右栏使用，分两层：
 
 ### 5.10 widgets
 
-`Calendar`（月网格 + DayActivity 指示 + 选中日回调）、`ResizableSplit`（拖分界调宽）、`TagBadge`、`CategoryTag` 等。
+`ResizableSplit`（拖分界调宽）、`TagBadge`、`CategoryTag` 等。待办页月历直接消费 kit `base::Calendar`（选日事件驱动清单刷新），无需自研 widget。
+
+### 5.11 tray
+
+kit / gpui 无托盘能力，引入 `tray-icon` crate（Tauri 同款）。托盘图标常驻；事件（左键单击 / 菜单项）经 channel 回收，转发模式与热键一致（channel → `cx.spawn` 主循环消费）。共存性已由 spike ⑥ 验证通过（`examples/spike6_tray_icon.rs`，2026-10-12）：托盘在 gpui 主线程创建即可，其内部消息窗口由 gpui 主循环的 GetMessage/DispatchMessage 泵分发，无需自建消息循环；`TrayIcon` 非 `Send`，存 gpui 全局；既有热键链路不受干扰，drop 即移除图标。交互：左键 = `main::open`（幂等激活）；右键菜单 = 打开主窗口 / 退出（退出前置 `flush_all` + `cx.quit()`，与显式退出按钮同路径）。静默启动由 `app.rs` 启动编排判定：启动参数含 `--silent` 时不打开主窗口、仅托盘驻留；开机自启动注册表 Run 键写入的就是带 `--silent` 的命令行。
 
 ## 6. 数据模型与 Schema
 
@@ -312,9 +331,10 @@ CREATE TABLE note_tags (
 );
 CREATE TABLE todos (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  title      TEXT NOT NULL,
-  detail     TEXT NOT NULL DEFAULT '',
+  content    TEXT NOT NULL,
   date       TEXT NOT NULL,                    -- YYYY-MM-DD
+  start_min  INTEGER,                         -- 自午夜分钟数 0–1439；start/end 同 NULL = 全天
+  end_min    INTEGER,                         -- 同上；两列由 Rust tuple 类型保证同 NULL 或同值
   done       INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -346,7 +366,7 @@ sequenceDiagram
 
 ## 8. 图片处理策略（定案）
 
-**粘贴流程**：向输入框粘贴图片 → App 将图片存储到 `{exe_dir}/imgs/`（内容哈希命名，天然去重）→ 在光标处插入 md 语法引用 `![图片](imgs/{hash}.{ext})`，路径指向 `{exe_dir}/imgs/{name}`。
+**粘贴流程**：向输入框粘贴图片 → App 将图片存储到 `{data_dir}/imgs/`（内容哈希命名，天然去重）→ 在光标处插入 md 语法引用 `![图片](imgs/{hash}.{ext})`，路径指向 `{data_dir}/imgs/{name}`。
 
 **手写引用**：用户可使用 md 语法手动指定绝对路径的图片。
 
@@ -354,7 +374,7 @@ sequenceDiagram
 
 | 正文中的引用          | 解析结果                 |
 | --------------------- | ------------------------ |
-| `imgs/...` 相对引用 | `{exe_dir}/imgs/...`   |
+| `imgs/...` 相对引用 | `{data_dir}/imgs/...` |
 | 绝对路径              | 原样加载                 |
 | 其他相对路径          | 不渲染为图片，按原文展示 |
 
@@ -423,5 +443,5 @@ pub fn open_window<V: Render>(
 2. spike（与步骤 1 并行）：① 图片粘贴——Ctrl+V 监听 + 剪贴板图片检测（图与文本并存时图片优先）；② markdown 图片渲染——`MarkdownPlugin` 拦截 image 节点落地 §8 规则；③ Auto 主题——Windows 下 `observe_window_appearance` 能否区分 Light/Dark；④ §9 六条 0.6 期约束在 0.7.1 复验。结论回写 §9 / §10 后再进入编辑器实现
 3. state 层 + tile 迁移到新架构（恢复到验证期同等功能：热键呼出、防抖自动保存、置顶；新增关闭 flush 语义）
 4. 主窗口 shell + 笔记页（列表 / 筛选 / 右键分类标签 / 卡片删除 / 编辑器三模式 / 图片粘贴）
-5. 待办页 + 首页日历
-6. 设置页（主题 / 字号 / 热键 / 数据路径与迁移 / 导出）
+5. 待办页（首页日历随 Phase 12 废弃，首页内容待定）
+6. 设置页（主题含色系预设 / 字号 / 热键 / 数据目录与迁移 / 导出 / 自启动 / 关闭退出 / 托盘与静默启动，ADR-0004/0005/0006）
