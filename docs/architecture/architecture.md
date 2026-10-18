@@ -1,6 +1,6 @@
 # Fragmenta 架构设计
 
-> 状态：定案（2026-10-05；2026-10-06 spike 结论回写；2026-10-12 设置页定案回写）
+> 状态：定案（2026-10-05；2026-10-06 spike 结论回写；2026-10-12 设置页定案回写；2026-10-18 功能模块组织调整）
 > 技术基线：Rust (edition 2024) · gpui-kit 0.7.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
 > 形态：单进程多窗口桌面应用，无后台服务，轻量低内存
 > 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 分类 / 标签）
@@ -44,75 +44,66 @@
 
 ```mermaid
 flowchart TB
-    subgraph app["fragmenta（bin crate）— 应用层"]
-        direction TB
-        MW["windows/main — 主窗口（单例）<br/>Home / Notes / Todos / Settings"]
-        TW["windows/tile — 磁贴窗口（多开）"]
-        ED["editor — Markdown 编辑器<br/>Source / Preview / Split"]
-        WG["widgets — Calendar / ResizableSplit / TagBadge"]
-        HK["hotkey — 全局热键控制器"]
-        ST["state — 跨窗口共享状态层（App 级 Entity）<br/>NotesState / TodosState / SettingsState"]
-    end
-
-    subgraph core["fragmenta-core（lib crate）— 纯逻辑层，零 gpui 依赖"]
-        DB["db — SQLite 全部 SQL 与迁移"]
-        MDL["model — 领域类型"]
-        SET["settings — settings.json + 路径解析"]
-        MED["media — 图片（data_dir 下 imgs/）"]
-        EXP["export — 导出 .md"]
-    end
-
+    APP["app — 启动装配与退出协调"]
+    MW["windows/main — 主窗口与页面装配"]
+    TW["windows/tile — 磁贴窗口"]
+    NT["notes — 状态、页面、笔记编辑器"]
+    TD["todos — 状态与页面"]
+    ST["settings — 状态、页面与色系"]
+    ED["editor — 共享文本输入与图片解析"]
+    WG["widgets / utils — 通用组件与取色盘"]
+    HK["hotkey / tray — 系统交互"]
+    CORE["fragmenta-core — model / db / settings / media / export"]
+    APP --> MW
+    APP --> HK
+    APP --> NT
+    APP --> TD
+    APP --> ST
+    MW --> NT
+    MW --> TD
     MW --> ST
+    TW --> NT
     TW --> ST
-    ED --> ST
-    MW --> ED
-    ED --> WG
-    MW --> WG
+    TW --> ED
+    NT --> ED
+    NT --> WG
+    NT --> ST
+    TD --> ST
+    ED --> CORE
+    NT --> CORE
+    TD --> CORE
+    ST --> CORE
+    HK --> MW
     HK --> TW
-    ST --> DB
-    ST --> SET
-    ST --> MDL
-    ED --> MED
-    MW --> EXP
-    DB --> MDL
 ```
 
-两条铁律，强制力分级：
+两条铁律：
 
-1. **`fragmenta-core` 零 gpui 依赖**——编译器强制（Cargo 依赖图）：模块全部依赖注入、无全局静态，数据逻辑可脱离 UI 框架编译与测试；
-2. **UI 层不出现 SQL**——封装 + 约定强制：state 层私有持有 `Arc<Db>`、不提供 getter，页面只能调用 state 的行为方法；页面代码禁止 import `fragmenta_core::db`。
+1. **`fragmenta-core` 零 gpui 依赖**：由 Cargo 依赖图约束，纯数据逻辑通过构造参数注入依赖。
+2. **UI 层不出现 SQL**：各功能的状态模块私有持有 `Arc<Db>`，页面调用状态行为方法；页面实现不直接访问数据库连接。
 
 ## 3. Workspace 结构
 
-```text
-Fragmenta/
-  Cargo.toml                  # [workspace] members = ["crates/*"]
-  crates/
-    fragmenta-core/           # 纯逻辑层（零 gpui 依赖）
-      Cargo.toml              # rusqlite（含 backup feature）/ serde / serde_json / chrono / sha2 / thiserror
-      src/
-        lib.rs
-        model/                # note.rs / todo.rs / filter.rs
-        db/                   # mod.rs（门面）/ migrate.rs / notes.rs / todos.rs / taxonomy.rs
-        settings.rs
-        media.rs
-        export.rs
-    fragmenta/                # 应用层（bin）
-      Cargo.toml              # gpui-kit / global-hotkey / raw-window-handle / fragmenta-core / windows-sys
-      src/
-        main.rs               # 仅调 app::run()
-        app.rs                # 启动编排：assets / theme / stores / hotkey / windows
-        state/                # notes.rs / todos.rs / settings.rs
-        hotkey.rs
-        editor/               # markdown 编辑器（源文本输入组件 + 三模式组装 + 图片粘贴）
-        widgets/              # calendar.rs / resizable_split.rs / tag_badge.rs
-        windows/
-          main/               # mod.rs（shell+路由）/ home.rs / notes/ / todos.rs / settings.rs
-          tile/               # 磁贴
-  （运行时产物：exe 旁仅 settings.json；data_dir（默认 exe 旁 data/）下平铺 fragmenta.db 与 imgs/；开发期在 target/debug/ 下）
-```
+工作区保留 `fragmenta-core`（lib）和 `fragmenta`（lib + bin）。以下应用路径相对于 `crates/fragmenta/src/`：
 
-state 层不独立成 crate：它依赖 gpui，且消费者只有 app 一个，crate 边界划在 core / app 之间即可。
+| 路径 | 内容 |
+| --- | --- |
+| `main.rs`、`lib.rs` | 程序入口、模块声明 |
+| `app.rs`、`app/quit.rs` | 启动装配、退出请求与失败提示 |
+| `notes/mod.rs`、`notes/state.rs` | 笔记功能接口、共享状态、事件、草稿与保存状态 |
+| `notes/editor.rs` | 笔记专用编辑器及三种编辑模式 |
+| `notes/page/` | 页面交互、视图、分类标签表单、标题栏操作区 |
+| `todos/mod.rs`、`todos/state.rs`、`todos/page/` | 待办功能接口、状态、月历页面与表单 |
+| `settings/mod.rs`、`settings/state.rs`、`settings/page.rs`、`settings/theme_schemes.rs` | 设置功能接口、状态、页面与内置色系 |
+| `editor/mod.rs`、`editor/source.rs`、`editor/image_path.rs` | 共享图库登记、源文本输入与图片路径插件 |
+| `windows/main/mod.rs`、`windows/main/home.rs` | 主窗口单例、导航与布局、首页占位 |
+| `windows/tile/mod.rs`、`windows/tile/open.rs`、`windows/tile/view.rs` | 磁贴创建、定位与交互 |
+| `widgets/`、`utils/palette.rs` | 通用分栏、徽片与取色盘 |
+| `hotkey.rs`、`tray.rs`、`win32.rs` | 热键、托盘与平台能力 |
+
+`fragmenta-core/src/` 保留 `model/`、`db/`、`settings.rs`、`media.rs`、`export.rs`。运行时 `settings.json` 固定 exe 旁，`fragmenta.db` 与 `imgs/` 位于数据目录。
+
+每个功能拥有其状态与视图，实现子模块私有，通过 `mod.rs` 导出调用方所需的接口。`NotesStore`、`TodosStore`、`SettingsStore` 与状态定义同文件；`ImageStore` 位于共享 `editor`，`PaletteStore` 位于 `utils/palette.rs`。启动装配统一创建并登记资源。
 
 ## 4. 核心设计决策
 
@@ -205,10 +196,10 @@ pub fn export_notes(notes: &[Note], out_dir: &Path, images: &Images) -> Result<E
 
 每篇笔记一个 `.md`（文件名取标题，非法字符替换，重名追加 id）；整个导出批次共用一个 `assets/` 文件夹：正文中被引用的 `imgs/{hash}.{ext}` 改写为 `assets/{hash}.{ext}`，仅被引用的图片拷入 `{out_dir}/assets/`（未引用的图库图片不导出）。无导入功能。
 
-### 5.6 state 层（主应用与磁贴共用）
+### 5.6 功能状态（主窗口与磁贴共用）
 
 ```rust
-pub enum Event {
+pub enum NotesEvent {
     Changed,                                              // 增删改 -> 列表/日历重拉；磁贴与编辑器不订阅
     Saved { key: NoteKey, id: i64, status: SaveStatus },  // 落库结果 -> 持有该 key 的磁贴更新保存状态与笔记 id
 }
@@ -243,7 +234,7 @@ impl NotesState {
 
 **错误呈现**：落库失败 → 磁贴顶栏持续显示“保存失败”，不打断输入，下一次防抖保存即自然重试；列表查询失败 → 列表区错误占位 + 重试；热键重注册失败（组合键被占用）→ 设置项旁红字提示、热键保持旧值不落库。全部用 kit 内联 UI，无系统弹窗。
 
-**退出保存失败**：所有退出入口先 `flush_all`，全部成功后 `cx.quit()`。任一失败时保留窗口、编辑内容与失败的 pending 槽，在主窗口显示 kit Dialog（主窗口已关闭时重新打开）：“仍要退出”丢弃未保存内容并直接退出；“重试”再次尝试全部 pending，成功后退出，失败则保留提示；“返回”取消退出、关闭提示，用户可继续编辑或复制内容到其他地方。Esc 等同“返回”，Enter 等同“重试”；提示期间重复退出不叠加对话框，主窗口关闭请求被阻止。
+**退出保存失败**：退出协调位于 `app::quit`，通过 `request_quit` 发起退出、`is_pending` 查询提示状态，标记类型由退出模块内部持有。所有退出入口先 `flush_all`，全部成功后 `cx.quit()`。任一失败时保留窗口、编辑内容与失败的 pending 槽，在主窗口显示 kit Dialog（主窗口已关闭时重新打开）：“仍要退出”丢弃未保存内容并直接退出；“重试”再次尝试全部 pending，成功后退出，失败则保留提示；“返回”取消退出、关闭提示，用户可继续编辑或复制内容到其他地方。Esc 等同“返回”，Enter 等同“重试”；提示期间重复退出不叠加对话框，主窗口关闭请求被阻止。
 
 `SettingsState` 是副作用集中地：
 
@@ -286,6 +277,7 @@ impl HotkeyController {
 ### 5.8 windows
 
 - `main::open(cx)`：单例幂等，已开则激活；`MainShell` 持 `Page` 枚举路由，各页 Entity 常驻（切换保留筛选与滚动状态）；侧栏用 kit `Sidebar::collapsible(true)`
+- 笔记页通过 `NotesPage::header_actions` 提供标题栏操作区，`MainShell` 持有笔记页观察句柄，模式切换后刷新选中态；按钮实现与编辑模式类型归笔记功能内部。
 - 主窗口关闭语义：`close_to_quit` 关（默认）→ 进程不退，托盘驻留（§5.11），再开走 `main::open` 重开；开 → 走 §5.6 统一退出流程，保存失败时保留主窗口供用户选择
 - `tile::open_new(cx)`：每次新窗口；`WindowKind::PopUp` + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为——首开磁贴中心对准光标（空间不足时钳制完整可见）；场上已有磁贴时取创建时机最新的现存磁贴的**当前实际位置**（登记表存 `AnyWindowHandle`，经 `update` 取 `window.bounds()`，磁贴被挪动后新磁贴跟随其现位置）级联偏移 26 逻辑像素，并经 `cx.displays()` 反查其中心点所在显示器做钳制；场上磁贴全部关闭后重置为首开行为；定位须绑定 `display_id`（坐标语义见 §9 条目 5）
 - `tile::TileView`：顶栏中间不含交互元素的区域为拖拽移动区；标题与正文共处同一输入区（仅一条分隔线，与弹窗边缘零外距）；窗口尺寸经八向边缘热区拖拽调整（下限 240×280 逻辑像素——gpui 无无边框窗口的边缘 resize API，热区按下记录起始快照，`canvas` 的 paint 钩子每帧注册窗口级 mouse 流，从快照全量计算目标后经 Win32 `SetWindowPos` 物理像素通道一次到位，左 / 上向边缘锚定拖拽前的对侧缘）；圆角窗口区域按实际尺寸设置，并在窗口 bounds 变化时重设（`observe_window_bounds`）；关闭语义——空草稿直接丢弃，非空草稿先 `flush_now` 同步保存再关闭（草稿可弃，已落库不删）
@@ -293,12 +285,12 @@ impl HotkeyController {
 
 磁贴关闭按钮与原生关闭请求（如 Alt+F4）共用保存检查：空磁贴取消待写槽；非空磁贴同步保存，失败则保留窗口与输入内容。原生回调直接更新视图实体，避免经窗口 handle 重入当前窗口。
 
-### 5.9 editor
+### 5.9 共享编辑能力与笔记编辑器
 
-Markdown 编辑器组件，被笔记页右栏使用，分两层：
+`editor` 提供共享输入能力，`notes/editor.rs` 组装笔记页专用编辑器：
 
-- **底层：源文本输入组件**——`TextareaState` 封装 + 图片粘贴钩子 + 字数统计回调 + 光标处插入 md 引用（见 §8）。磁贴正文区与编辑器 Source 模式共同消费，图片粘贴钩子全应用仅此一份
-- **编辑器组装**：模式枚举 `Source | Preview | Split`——Source = 源文本输入组件，Preview = `base::markdown(...).plugin(图片路径插件).scrollable(true)`，Split 左右双栏
+- **共享源文本输入组件**——`TextareaState` 封装 + 图片粘贴钩子 + 字数统计回调 + 光标处插入 md 引用（见 §8）。磁贴正文区与编辑器 Source 模式共同消费，图片粘贴钩子全应用仅此一份
+- **笔记编辑器组装**：模式枚举 `Source | Preview | Split`——Source = 源文本输入组件，Preview = `base::markdown(...).plugin(图片路径插件).scrollable(true)`，Split 左右双栏
 - 图片粘贴机制（spike ① 验证）：kit 0.7.1 提供 `Textarea::on_paste` 官方拦截点（`capture_action(Paste)` + `stop_propagation`），handler 签名 `Fn(&ClipboardItem, &mut Window, &mut App) -> bool`，返回 `true` 消费本次粘贴；图与文本并存时图片优先；图片经 `Image::from_bytes` 取字节 → `Images::import` → `TextareaState::insert` 光标处插入引用。handler 内实体更新必须经 `Entity::update` + handler 持有的 `&mut Window`——`WeakEntity::update_in` 走 `App::with_window`，在 capture_action 派发栈内窗口已被占用，查找必然失败
 - Split 双栏各自独立滚动为最终行为（见 ADR-0003）
 - 编辑器只含标题与正文，不含分类 / 标签 UI（分类标签唯一查看编辑入口 = 左栏卡片右键菜单）
