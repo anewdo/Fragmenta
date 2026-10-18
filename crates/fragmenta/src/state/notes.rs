@@ -78,19 +78,24 @@ impl NotesState {
         self.pending.remove(key);
     }
 
-    /// 立即落库全部 pending 槽（退出应用 / 数据迁移前的一致性保障）。
-    pub fn flush_all(&mut self, cx: &mut Context<Self>) {
+    /// 立即尝试落库全部 pending 槽；任一失败则返回 `Failed`，失败内容保留供重试。
+    pub fn flush_all(&mut self, cx: &mut Context<Self>) -> SaveStatus {
         let keys: Vec<NoteKey> = self.pending.keys().cloned().collect();
+        let mut status = SaveStatus::Saved;
         for key in keys {
-            self.flush(&key, cx);
+            if self.flush(&key, cx) == Some(SaveStatus::Failed) {
+                status = SaveStatus::Failed;
+            }
         }
+        status
     }
 
-    /// 删除笔记；成功后广播 `Changed`（note_tags 级联与孤儿标签清理由 db 层负责）。
-    pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
-        if self.db.delete_note(id).is_ok() {
-            cx.emit(Event::Changed);
-        }
+    /// 删除成功后取消该笔记的待写槽与计时器，再广播 `Changed`。
+    pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) -> DbResult<()> {
+        self.db.delete_note(id)?;
+        self.cancel(&NoteKey::Note(id));
+        cx.emit(Event::Changed);
+        Ok(())
     }
 
     /// 设置笔记分类（唯一、可清除、新分类自动建立）；成功后广播 `Changed`。
@@ -169,5 +174,148 @@ impl NotesState {
                 Some(SaveStatus::Failed)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{AppContext as _, TestAppContext};
+
+    #[gpui_kit::test]
+    fn delete_cancels_only_the_deleted_notes_pending_write(cx: &mut TestAppContext) {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|_| NotesState::new(db.clone()));
+        let draft = cx.new(|_| ()).entity_id();
+        let mut note = NoteDraft {
+            key: NoteKey::Draft(draft),
+            title: "删除目标".into(),
+            content: "已有内容".into(),
+        }
+        .to_note();
+        db.upsert_note(&mut note).unwrap();
+        state.update(cx, |state, cx| {
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Note(note.id),
+                    title: "删除目标".into(),
+                    content: "尚未落库的编辑".into(),
+                },
+                cx,
+            );
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Draft(draft),
+                    title: "另一篇笔记".into(),
+                    content: "应正常保存".into(),
+                },
+                cx,
+            );
+            state.delete(note.id, cx).unwrap();
+            assert!(!state.pending.contains_key(&NoteKey::Note(note.id)));
+            assert!(state.pending.contains_key(&NoteKey::Draft(draft)));
+        });
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(DEBOUNCE);
+        cx.executor().run_until_parked();
+        state.update(cx, |state, cx| {
+            assert!(state.pending.is_empty());
+            assert_eq!(state.flush_all(cx), SaveStatus::Saved);
+        });
+        let notes = db.notes(&NoteFilter::default()).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].content, "应正常保存");
+    }
+
+    #[gpui_kit::test]
+    fn delete_clears_a_previously_failed_pending_write(cx: &mut TestAppContext) {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|_| NotesState::new(db.clone()));
+        state.update(cx, |state, cx| {
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Note(1),
+                    title: "失败槽".into(),
+                    content: "等待重试".into(),
+                },
+                cx,
+            );
+            assert_eq!(state.flush_all(cx), SaveStatus::Failed);
+            state.delete(1, cx).unwrap();
+            assert!(state.pending.is_empty());
+            assert_eq!(state.flush_all(cx), SaveStatus::Saved);
+        });
+        assert!(db.notes(&NoteFilter::default()).unwrap().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn flush_all_attempts_every_slot_and_retains_failures(cx: &mut TestAppContext) {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|_| NotesState::new(db.clone()));
+        let draft = cx.new(|_| ()).entity_id();
+        state.update(cx, |state, cx| {
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Note(100),
+                    title: "失败内容".into(),
+                    content: "保留供重试".into(),
+                },
+                cx,
+            );
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Draft(draft),
+                    title: "成功内容".into(),
+                    content: "完整落库".into(),
+                },
+                cx,
+            );
+            assert_eq!(state.flush_all(cx), SaveStatus::Failed);
+            assert_eq!(state.pending.len(), 1);
+            assert_eq!(
+                state.pending[&NoteKey::Note(100)].draft.content,
+                "保留供重试"
+            );
+            assert!(state.pending[&NoteKey::Note(100)].timer.is_none());
+            assert_eq!(state.flush_all(cx), SaveStatus::Failed);
+        });
+        let notes = db.notes(&NoteFilter::default()).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].content, "完整落库");
+    }
+
+    #[gpui_kit::test]
+    fn flush_all_retries_retained_content(cx: &mut TestAppContext) {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|_| NotesState::new(db.clone()));
+        let mut note = NoteDraft {
+            key: NoteKey::Draft(cx.new(|_| ()).entity_id()),
+            title: "原内容".into(),
+            content: "原内容".into(),
+        }
+        .to_note();
+        state.update(cx, |state, cx| {
+            state.save(
+                NoteDraft {
+                    key: NoteKey::Note(1),
+                    title: "待保存标题".into(),
+                    content: "待保存内容".into(),
+                },
+                cx,
+            );
+            assert_eq!(state.flush_all(cx), SaveStatus::Failed);
+        });
+        // 补回缺失记录，消除真实 SQLite 更新失败的原因。
+        db.upsert_note(&mut note).unwrap();
+        assert_eq!(note.id, 1);
+        state.update(cx, |state, cx| {
+            assert_eq!(state.flush_all(cx), SaveStatus::Saved);
+            assert!(state.pending.is_empty());
+            assert_eq!(state.flush_all(cx), SaveStatus::Saved);
+        });
+        let notes = db.notes(&NoteFilter::default()).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "待保存标题");
+        assert_eq!(notes[0].content, "待保存内容");
     }
 }

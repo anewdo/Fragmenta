@@ -89,9 +89,6 @@ pub fn open_new(cx: &mut App) {
         ..Default::default()
     };
     match gpui_kit::open_window(options, cx, |window, cx| {
-        // Auto 主题桥接：磁贴同样登记系统外观监听（主窗口关闭后仍可跟随）
-        let settings = cx.global::<crate::app::SettingsStore>().0.clone();
-        settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
         cx.new(|cx| TileView::new(window, cx))
     }) {
         Ok((window, view)) => tiles.push(TileEntry {

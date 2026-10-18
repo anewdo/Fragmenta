@@ -50,6 +50,7 @@ pub(super) struct TileView {
     _bounds_sub: Subscription,
     /// 正文字号档变化 → 标题 / 正文随 content_font_px 重渲染。
     _settings_sub: Subscription,
+    _appearance_sub: Subscription,
 }
 
 impl TileView {
@@ -102,10 +103,17 @@ impl TileView {
             this.refresh_rounded_region(window);
         });
 
-        // 订阅矩阵（§5.6）：正文字号变化 → 标题 / 正文重渲染（content_font_px）
         let settings = cx.global::<SettingsStore>().0.clone();
+        let appearance_sub =
+            settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
+        // 订阅矩阵（§5.6）：正文字号变化 → 标题 / 正文重渲染（content_font_px）
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();
+        });
+        let weak = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |_, cx| {
+            weak.update(cx, |this, cx| this.can_close(cx))
+                .unwrap_or(true)
         });
 
         // 焦点落正文：热键呼出后立即输入
@@ -126,6 +134,7 @@ impl TileView {
             _saved_sub: saved_sub,
             _bounds_sub: bounds_sub,
             _settings_sub: settings_sub,
+            _appearance_sub: appearance_sub,
         }
     }
 
@@ -187,24 +196,30 @@ impl TileView {
         });
     }
 
-    /// 关闭语义（§5.8）：空草稿直接丢弃（cancel 待写槽）；非空先 `flush_now`
-    /// 同步保存再关闭；落库失败时阻止关闭并持续提示，用户处理后自然重试。
-    fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 按钮与原生关闭共用判断：空磁贴取消待写槽，非空先同步保存，失败则留窗。
+    fn can_close(&mut self, cx: &mut Context<Self>) -> bool {
         let title = self.title.read(cx).value().to_string();
         let content = self.source.value(cx);
         if title.is_empty() && content.is_empty() {
             let key = self.key.clone();
             self.notes.update(cx, |state, _| state.cancel(&key));
-            window.remove_window();
+            true
         } else {
             let key = self.key.clone();
             let status = self.notes.update(cx, |state, cx| state.flush_now(key, cx));
             if status == Some(SaveStatus::Failed) {
                 self.status = SaveIndicator::Failed;
                 cx.notify();
+                false
             } else {
-                window.remove_window();
+                true
             }
+        }
+    }
+
+    fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.can_close(cx) {
+            window.remove_window();
         }
     }
 
@@ -373,5 +388,171 @@ impl Render for TileView {
                     .text_color(muted_foreground)
                     .child(format!("{} 字", self.word_count)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SaveIndicator, TileView};
+    use crate::app::{ImageStore, NotesStore, SettingsStore};
+    use crate::state::{NoteDraft, NoteKey, NotesState, SaveStatus, SettingsState};
+    use fragmenta_core::{db::Db, media::Images, model::NoteFilter, settings::Settings};
+    use gpui_kit::{
+        AnyWindowHandle, AppContext as _, Entity, TestAppContext, VisualTestContext, WindowOptions,
+    };
+    use std::{path::PathBuf, sync::Arc};
+
+    fn open_tile(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TileView>, Arc<Db>) {
+        cx.update(gpui_kit::init);
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let notes = cx.new(|_| NotesState::new(db.clone()));
+        let settings = cx.new(|cx| {
+            SettingsState::new(
+                Settings::default(),
+                PathBuf::from("temp/tile-test-settings.json"),
+                cx,
+            )
+        });
+        let (handle, tile) = cx.update(|cx| {
+            cx.set_global(NotesStore(notes));
+            cx.set_global(SettingsStore(settings));
+            cx.set_global(ImageStore(Images::new(PathBuf::from(
+                "temp/tile-test-imgs",
+            ))));
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| TileView::new(window, cx))
+            })
+            .unwrap()
+        });
+        (handle, tile, db)
+    }
+
+    #[gpui_kit::test]
+    fn native_close_saves_nonempty_tile(cx: &mut TestAppContext) {
+        let (handle, tile, db) = open_tile(cx);
+        cx.update_window(handle, |_, window, cx| {
+            tile.update(cx, |tile, cx| {
+                tile.title.update(cx, |input, cx| {
+                    input.set_value("原生关闭前保存", window, cx)
+                });
+                tile.dispatch_save(cx);
+            });
+        })
+        .unwrap();
+        let mut visual = VisualTestContext::from_window(handle, cx);
+        assert!(visual.simulate_close());
+        let notes = db.notes(&NoteFilter::default()).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "原生关闭前保存");
+    }
+
+    #[gpui_kit::test]
+    fn native_close_failure_keeps_window_and_content(cx: &mut TestAppContext) {
+        let (handle, tile, _) = open_tile(cx);
+        cx.update_window(handle, |_, window, cx| {
+            tile.update(cx, |tile, cx| {
+                tile.key = NoteKey::Note(1);
+                tile.title.update(cx, |input, cx| {
+                    input.set_value("保存失败仍保留", window, cx)
+                });
+                tile.dispatch_save(cx);
+            });
+        })
+        .unwrap();
+        let mut visual = VisualTestContext::from_window(handle, cx);
+        assert!(!visual.simulate_close());
+        assert!(cx.windows().contains(&handle));
+        tile.read_with(cx, |tile, cx| {
+            assert!(tile.status == SaveIndicator::Failed);
+            assert_eq!(tile.title.read(cx).value().as_str(), "保存失败仍保留");
+        });
+    }
+
+    #[gpui_kit::test]
+    fn native_close_empty_tile_cancels_pending(cx: &mut TestAppContext) {
+        let (handle, tile, db) = open_tile(cx);
+        tile.update(cx, |tile, cx| {
+            let key = tile.key.clone();
+            tile.notes.update(cx, |state, cx| {
+                state.save(
+                    NoteDraft {
+                        key,
+                        title: "过期待写内容".into(),
+                        content: String::new(),
+                    },
+                    cx,
+                )
+            });
+        });
+        let mut visual = VisualTestContext::from_window(handle, cx);
+        assert!(visual.simulate_close());
+        let notes = cx.update(|cx| cx.global::<NotesStore>().0.clone());
+        assert_eq!(
+            notes.update(cx, |state, cx| state.flush_all(cx)),
+            SaveStatus::Saved
+        );
+        assert!(db.notes(&NoteFilter::default()).unwrap().is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn appearance_subscription_is_released_with_each_tile(cx: &mut TestAppContext) {
+        let (first_handle, first_tile, _) = open_tile(cx);
+        let notes = cx.update(|cx| cx.global::<NotesStore>().0.clone());
+        let active = std::rc::Rc::new(std::cell::Cell::new(0));
+        let first_weak = first_tile.downgrade();
+        first_tile.update(cx, |tile, _| {
+            let subscription = std::mem::replace(
+                &mut tile._appearance_sub,
+                gpui_kit::Subscription::new(|| {}),
+            );
+            active.set(active.get() + 1);
+            let active = active.clone();
+            tile._appearance_sub = gpui_kit::Subscription::join(
+                subscription,
+                gpui_kit::Subscription::new(move || {
+                    active.set(active.get() - 1);
+                }),
+            );
+        });
+        drop(first_tile);
+        for _ in 0..12 {
+            let (handle, tile) = cx.update(|cx| {
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| TileView::new(window, cx))
+                })
+                .unwrap()
+            });
+            tile.update(cx, |tile, _| {
+                let subscription = std::mem::replace(
+                    &mut tile._appearance_sub,
+                    gpui_kit::Subscription::new(|| {}),
+                );
+                active.set(active.get() + 1);
+                let active = active.clone();
+                tile._appearance_sub = gpui_kit::Subscription::join(
+                    subscription,
+                    gpui_kit::Subscription::new(move || {
+                        active.set(active.get() - 1);
+                    }),
+                );
+            });
+            let weak = tile.downgrade();
+            drop(tile);
+            assert_eq!(active.get(), 2);
+            cx.update_window(handle, |_, window, _| window.remove_window())
+                .unwrap();
+            assert!(!weak.is_upgradable());
+            assert_eq!(active.get(), 1);
+            assert!(first_weak.is_upgradable());
+        }
+        cx.update_window(first_handle, |_, window, _| window.remove_window())
+            .unwrap();
+        assert!(!first_weak.is_upgradable());
+        assert_eq!(active.get(), 0);
+        assert!(cx.windows().is_empty());
+        assert_eq!(
+            notes.update(cx, |state, cx| state.flush_all(cx)),
+            SaveStatus::Saved
+        );
     }
 }

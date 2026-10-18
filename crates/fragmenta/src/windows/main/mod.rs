@@ -49,6 +49,11 @@ impl Page {
 
 /// 打开主窗口；已开则激活既有窗口（单例幂等，D7）。
 pub fn open(cx: &mut App) {
+    open_handle(cx);
+}
+
+/// 打开或激活主窗口，并返回可承载退出提示的窗口。
+pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
     if let Some(handle) = cx.try_global::<MainWindow>().map(|reg| reg.0) {
         // 窗口仍存活则激活；已关闭时登记表过期，走重开路径
         if cx.windows().contains(&handle)
@@ -57,7 +62,7 @@ pub fn open(cx: &mut App) {
                 .update(cx, |_, window, _| window.activate_window())
                 .is_ok()
         {
-            return;
+            return Some(handle);
         }
     }
 
@@ -72,13 +77,16 @@ pub fn open(cx: &mut App) {
         ..Default::default()
     };
     match gpui_kit::open_window(options, cx, |window, cx| {
-        // Auto 主题桥接：本窗口登记系统外观监听（SettingsState 内收敛，D8）
-        let settings = cx.global::<crate::app::SettingsStore>().0.clone();
-        settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
         cx.new(|cx| MainShell::new(window, cx))
     }) {
-        Ok((handle, _)) => cx.set_global(MainWindow(handle)),
-        Err(err) => eprintln!("[fragmenta] 打开主窗口失败: {err:?}"),
+        Ok((handle, _)) => {
+            cx.set_global(MainWindow(handle));
+            Some(handle)
+        }
+        Err(err) => {
+            eprintln!("[fragmenta] 打开主窗口失败: {err:?}");
+            None
+        }
     }
 }
 
@@ -90,17 +98,22 @@ struct MainShell {
     notes: Entity<NotesPage>,
     todos: Entity<TodosPage>,
     settings: Entity<SettingsPage>,
+    _appearance_sub: Subscription,
 }
 
 impl MainShell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let settings = cx.global::<crate::app::SettingsStore>().0.clone();
+        let appearance_sub =
+            settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
         // 主窗口关闭语义（架构 §5.8）：close_to_quit 开 → 统一退出路径
-        // （flush_all + 完全退出）；关（默认）→ 窗口关闭但进程托盘驻留
+        // （保存失败时保留窗口）；关（默认）→ 窗口关闭但进程托盘驻留
         // （QuitMode::Explicit），热键照常呼出磁贴，托盘可再开主窗口。
         window.on_window_should_close(cx, |_, cx| {
             let settings = cx.global::<crate::app::SettingsStore>().0.clone();
-            if settings.read(cx).close_to_quit() {
-                crate::app::quit_flushing(cx);
+            if settings.read(cx).close_to_quit() || cx.has_global::<crate::app::QuitPrompt>() {
+                cx.defer(crate::app::quit_flushing);
+                return false;
             }
             true
         });
@@ -111,6 +124,7 @@ impl MainShell {
             notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(SettingsPage::new),
+            _appearance_sub: appearance_sub,
         }
     }
 

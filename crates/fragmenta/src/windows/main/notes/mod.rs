@@ -196,17 +196,20 @@ impl NotesPage {
                 .ok_variant(ButtonVariant::Danger)
                 .cancel_text("取消")
                 .on_ok(move |_, window, cx| {
-                    let _ = weak.update(cx, |this, cx| {
-                        this.notes.update(cx, |s, cx| s.delete(id, cx));
+                    weak.update(cx, |this, cx| {
+                        if let Err(err) = this.notes.update(cx, |s, cx| s.delete(id, cx)) {
+                            window.push_notification(Notification::error(err.to_string()), cx);
+                            return false;
+                        }
                         // 删除协调（§5.6）：正打开的笔记被删 → 同步清空编辑器
-                        //（cancel 该 key 待写槽，免于过期 upsert 虚警）
                         if this.selected == Some(id) {
                             this.selected = None;
                             this.editor
                                 .update(cx, |editor, cx| editor.clear(window, cx));
                         }
-                    });
-                    true
+                        true
+                    })
+                    .unwrap_or(true)
                 })
         });
     }

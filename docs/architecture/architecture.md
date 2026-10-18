@@ -223,9 +223,10 @@ impl NotesState {
     // 关闭路径：立即落库该槽 pending 内容；None = 无待写槽，Some(Failed) 阻止关窗（磁贴持续提示）
     pub fn cancel(&mut self, key: &NoteKey);
     // 丢弃该槽待写内容与计时器：空草稿关闭 + Draft→Note 晋升清理（防旧槽带过期内容重建计时落出重复笔记）
-    pub fn flush_all(&mut self, cx: &mut Context<Self>);
-    // 全部 pending 槽立即落库：显式退出 / 数据迁移前的一致性保障
-    pub fn delete(&mut self, id: i64, cx: &mut Context<Self>);
+    pub fn flush_all(&mut self, cx: &mut Context<Self>) -> SaveStatus;
+    // 尝试全部 pending 槽；任一失败返回 Failed，失败内容保留供重试
+    pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) -> db::Result<()>;
+    // 删除成功后取消 Note(id) 待写槽与计时器，再广播 Changed；失败保留待写内容
     pub fn set_category(&mut self, id: i64, cat: Option<&str>, cx: &mut Context<Self>);
     pub fn set_tags(&mut self, id: i64, tags: Vec<String>, cx: &mut Context<Self>);
     pub fn notes(&self, filter: &NoteFilter) -> db::Result<Vec<Note>>;   // read-through 直查；失败可观察（列表错误占位依赖于此）
@@ -238,9 +239,11 @@ impl NotesState {
 
 **id 回填闭环**：新磁贴持 `Option<i64>`，保存以 `Draft` key 提交；收到匹配自己的 `Saved { key, id, .. }` 后记录 id，此后以 `Note(id)` 为 key 保存。
 
-**删除协调**：删除入口为左栏卡片右端垃圾桶图标（带确认）。列表与编辑器同属笔记页、页面持两者 handle，删除时若编辑器正打开该笔记则同步清空编辑器，无需新增事件。
+**删除协调**：删除入口为左栏卡片右端垃圾桶图标（带确认）。`NotesState::delete` 在数据库删除成功后取消对应 `Note(id)` 待写槽与计时器（含先前保存失败保留的槽），再广播 `Changed`。页面仅在删除成功后清空当前编辑器；删除失败则保留确认框、编辑内容与待写槽，并显示错误通知。
 
 **错误呈现**：落库失败 → 磁贴顶栏持续显示“保存失败”，不打断输入，下一次防抖保存即自然重试；列表查询失败 → 列表区错误占位 + 重试；热键重注册失败（组合键被占用）→ 设置项旁红字提示、热键保持旧值不落库。全部用 kit 内联 UI，无系统弹窗。
+
+**退出保存失败**：所有退出入口先 `flush_all`，全部成功后 `cx.quit()`。任一失败时保留窗口、编辑内容与失败的 pending 槽，在主窗口显示 kit Dialog（主窗口已关闭时重新打开）：“仍要退出”丢弃未保存内容并直接退出；“重试”再次尝试全部 pending，成功后退出，失败则保留提示；“返回”取消退出、关闭提示，用户可继续编辑或复制内容到其他地方。Esc 等同“返回”，Enter 等同“重试”；提示期间重复退出不叠加对话框，主窗口关闭请求被阻止。
 
 `SettingsState` 是副作用集中地：
 
@@ -263,6 +266,8 @@ impl SettingsState {
 
 **Auto 主题桥接**（spike ③ 结论）：`observe_window_appearance` 回调 → 依外观 `Theme::global_mut` 切换 light/dark → `Theme::sync_base` + `App::refresh_windows()`。kit 主题不自动跟随系统外观，桥接逻辑收敛于 `SettingsState`（D8）。Auto 与色系主题互斥（枚举单选，ADR-0005）。
 
+`SettingsState::attach_appearance_bridge` 校准当前外观并返回 `Subscription`，由 `MainShell` / `TileView` 各自持有；窗口视图释放时取消监听，设置 store 不累计保存订阅。
+
 **数据迁移流程**（`set_data_dir` 内编排；一致性走 SQLite backup API，禁止文件系统裸拷，见 ADR-0002；布局与旧档处置见 ADR-0004 / ADR-0006）：前置 `flush_all` → 校验新路径可写 → 在新路径建立全新连接、由旧连接 `backup_to` 在线备份 → `Db::open(新路径)` 试开 → `imgs/` 图库文件随迁拷贝 → 各 store 与 `ImageStore` 原子替换 `Arc<Db>` / 图库根 → `settings.save` → 广播 `Changed`。磁贴窗口持有 store handle，自动使用新连接；旧目录改名留存为 `.bak`，不自动删除，用户确认后自行清理。
 
 ### 5.7 hotkey
@@ -281,10 +286,12 @@ impl HotkeyController {
 ### 5.8 windows
 
 - `main::open(cx)`：单例幂等，已开则激活；`MainShell` 持 `Page` 枚举路由，各页 Entity 常驻（切换保留筛选与滚动状态）；侧栏用 kit `Sidebar::collapsible(true)`
-- 主窗口关闭语义：`close_to_quit` 关（默认）→ 进程不退，托盘驻留（§5.11），再开走 `main::open` 重开；开 → `flush_all` 落库后 `cx.quit()` 完全退出
+- 主窗口关闭语义：`close_to_quit` 关（默认）→ 进程不退，托盘驻留（§5.11），再开走 `main::open` 重开；开 → 走 §5.6 统一退出流程，保存失败时保留主窗口供用户选择
 - `tile::open_new(cx)`：每次新窗口；`WindowKind::PopUp` + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为——首开磁贴中心对准光标（空间不足时钳制完整可见）；场上已有磁贴时取创建时机最新的现存磁贴的**当前实际位置**（登记表存 `AnyWindowHandle`，经 `update` 取 `window.bounds()`，磁贴被挪动后新磁贴跟随其现位置）级联偏移 26 逻辑像素，并经 `cx.displays()` 反查其中心点所在显示器做钳制；场上磁贴全部关闭后重置为首开行为；定位须绑定 `display_id`（坐标语义见 §9 条目 5）
 - `tile::TileView`：顶栏中间不含交互元素的区域为拖拽移动区；标题与正文共处同一输入区（仅一条分隔线，与弹窗边缘零外距）；窗口尺寸经八向边缘热区拖拽调整（下限 240×280 逻辑像素——gpui 无无边框窗口的边缘 resize API，热区按下记录起始快照，`canvas` 的 paint 钩子每帧注册窗口级 mouse 流，从快照全量计算目标后经 Win32 `SetWindowPos` 物理像素通道一次到位，左 / 上向边缘锚定拖拽前的对侧缘）；圆角窗口区域按实际尺寸设置，并在窗口 bounds 变化时重设（`observe_window_bounds`）；关闭语义——空草稿直接丢弃，非空草稿先 `flush_now` 同步保存再关闭（草稿可弃，已落库不删）
 - 统一经 kit 门面 `gpui_kit::open_window` 开窗（自动包 `base::Root`，获得 overlay hosting——右键菜单 / Popover 依赖）
+
+磁贴关闭按钮与原生关闭请求（如 Alt+F4）共用保存检查：空磁贴取消待写槽；非空磁贴同步保存，失败则保留窗口与输入内容。原生回调直接更新视图实体，避免经窗口 handle 重入当前窗口。
 
 ### 5.9 editor
 

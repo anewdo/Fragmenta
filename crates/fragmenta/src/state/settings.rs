@@ -30,19 +30,12 @@ impl EventEmitter<SettingsEvent> for SettingsState {}
 pub struct SettingsState {
     settings: Settings,
     path: PathBuf,
-    /// Auto 桥接监听：每个存活窗口登记一次，窗口关闭订阅自然失效，
-    /// 新窗口打开时重新登记（见 [`SettingsState::attach_appearance_bridge`]）。
-    appearance_subscriptions: Vec<Subscription>,
 }
 
 impl SettingsState {
     /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
     pub fn new(settings: Settings, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let mut state = Self {
-            settings,
-            path,
-            appearance_subscriptions: Vec::new(),
-        };
+        let mut state = Self { settings, path };
         state.apply_theme_mode(cx);
         state
     }
@@ -105,16 +98,19 @@ impl SettingsState {
 
     /// 窗口创建时登记 Auto 桥接（主窗口与磁贴各自调用）：
     /// 先按窗口当前外观校准一次（覆盖无窗口期间系统深浅色变化），
-    /// 再挂接本窗口的系统外观监听；窗口关闭订阅自然失效。
-    pub fn attach_appearance_bridge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// 返回的订阅由窗口视图持有，视图释放时一并取消监听。
+    pub fn attach_appearance_bridge(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
         self.sync_auto_mode(window.appearance(), cx);
-        self.appearance_subscriptions
-            .push(window.observe_window_appearance(|window, cx| {
-                let store = cx.global::<SettingsStore>().0.clone();
-                store.update(cx, |state, cx| {
-                    state.sync_auto_mode(window.appearance(), cx);
-                });
-            }));
+        window.observe_window_appearance(|window, cx| {
+            let store = cx.global::<SettingsStore>().0.clone();
+            store.update(cx, |state, cx| {
+                state.sync_auto_mode(window.appearance(), cx);
+            });
+        })
     }
 
     /// Auto 桥接：主题模式为 Auto 时跟随系统外观切换 kit 主题；
