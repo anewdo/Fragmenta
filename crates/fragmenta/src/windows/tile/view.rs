@@ -234,13 +234,14 @@ impl TileView {
 impl Render for TileView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
-        let (background, border, muted_foreground, danger) = {
+        let (background, border, muted_foreground, danger, title_bar) = {
             let theme = cx.theme();
             (
                 theme.background,
                 theme.border,
                 theme.muted_foreground,
                 theme.danger,
+                theme.title_bar,
             )
         };
         // 内容阅读面：标题 / 正文随正文字号档缩放（辅助小字保持固定）
@@ -264,6 +265,8 @@ impl Render for TileView {
             .px_2()
             .h_9()
             .flex_shrink_0()
+            // 顶栏：以 title_bar token 着色（色系主题下为深调 chrome）
+            .bg(title_bar)
             .border_b_1()
             .border_color(border)
             .child(

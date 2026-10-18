@@ -1,9 +1,9 @@
 //! 设置状态（架构 §5.6 / D8 副作用集中）：运行期 `Settings` 的唯一权威副本，
 //! 修改即持久化（settings.json，ADR-0004 锚点）。
 //!
-//! 主题模式的解析与应用（含 Auto 系统外观桥接）收敛于此：构造时应用一次
-//! （启动期唯一入口），此后每次修改即时生效于全部存活窗口
-//! （`Theme::change` 内部 `refresh_windows`，含已开磁贴）。
+//! 主题模式的解析与应用（含 Auto 系统外观桥接、内置色系覆盖）收敛于此：
+//! 构造时应用一次（启动期唯一入口），此后每次修改即时生效于全部存活窗口
+//! （`Theme::change` / `Theme::update` 内部 `refresh_windows`，含已开磁贴）。
 //!
 //! 字号档位不写全局主题：kit 组件几何按 16px rem 基准设计，全局放大
 //! 会使 px 固定几何组件（日历等）文字溢出。字号只作用于内容阅读面，
@@ -16,6 +16,7 @@ use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{Context, EventEmitter, Pixels, Subscription, Window, WindowAppearance, px};
 
 use crate::app::SettingsStore;
+use crate::theme_schemes::{self, ThemeScheme};
 
 /// 设置变更广播：订阅方（设置页等）据此刷新展示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,14 +129,29 @@ impl SettingsState {
         }
     }
 
-    /// 按设置应用主题模式：Auto 解析为当前系统外观（App 级，无窗口期同样可解析）。
+    /// 按设置应用主题模式：内置色系 = Light 基线 + 核心 token 覆盖
+    /// （ADR-0005）；Auto 解析为当前系统外观（App 级，无窗口期同样可解析）。
     fn apply_theme_mode(&mut self, cx: &mut Context<Self>) {
-        let mode = match self.settings.theme {
-            ThemeMode::Light => KitThemeMode::Light,
-            ThemeMode::Dark => KitThemeMode::Dark,
-            ThemeMode::Auto => kit_mode_of(cx.window_appearance()),
-        };
-        Theme::change(mode, None, cx);
+        match self.settings.theme {
+            ThemeMode::Light => Theme::change(KitThemeMode::Light, None, cx),
+            ThemeMode::Dark => Theme::change(KitThemeMode::Dark, None, cx),
+            ThemeMode::Auto => {
+                Theme::change(kit_mode_of(cx.window_appearance()), None, cx)
+            }
+            ThemeMode::DouShaGreen => {
+                Self::apply_color_scheme(theme_schemes::dou_sha_green(), cx)
+            }
+            ThemeMode::SkyBlue => Self::apply_color_scheme(theme_schemes::sky_blue(), cx),
+        }
+    }
+
+    /// 内置色系落色：先切 Light 基线（复位 Dark / 上一套色系的残余色），
+    /// 再以 `Theme::update` 覆盖核心 token（内部 refresh_windows，全窗口
+    /// 即时生效）。切回 Light / Dark / Auto 时 `Theme::change` 重载注册
+    /// 主题，覆盖自然清除，无状态残留。
+    fn apply_color_scheme(scheme: ThemeScheme, cx: &mut Context<Self>) {
+        Theme::change(KitThemeMode::Light, None, cx);
+        Theme::update(cx, |theme| scheme.apply(&mut theme.colors));
     }
 
     /// 持久化到 settings.json；失败不中断交互（eprintln 容错，与项目现状一致）。

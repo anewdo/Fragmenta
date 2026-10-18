@@ -9,6 +9,7 @@ pub mod hotkey;
 pub mod tray;
 
 pub mod state;
+pub mod theme_schemes;
 pub mod utils;
 pub mod widgets;
 pub mod win32;

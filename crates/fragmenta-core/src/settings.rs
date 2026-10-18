@@ -4,13 +4,20 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 主题模式；Auto 的 Windows 行为待 Phase 2 spike 裁决（架构 §5.3）。
+/// 主题模式（ADR-0005）：Light / Dark / Auto 之外并列内置色系（豆沙绿 /
+/// 天空蓝），与 Auto 互斥（枚举单选）；色系在应用层以 Light 基线 + 核心
+/// token 覆盖方式落色。后续主色派生色系可继续追加变体，不影响既有
+/// 序列化值（预留扩展位）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
     #[default]
     Light,
     Dark,
     Auto,
+    /// 内置色系：豆沙绿。
+    DouShaGreen,
+    /// 内置色系：天空蓝。
+    SkyBlue,
 }
 
 /// 字号档位，映射 Theme.font_size。

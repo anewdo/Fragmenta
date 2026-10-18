@@ -217,6 +217,8 @@ impl Render for MainShell {
                             .px_3()
                             .h_10()
                             .flex_shrink_0()
+                            // 标题栏行：以 title_bar token 着色（色系主题下为深调 chrome）
+                            .bg(cx.theme().title_bar)
                             .border_b_1()
                             .border_color(cx.theme().border)
                             .child(SidebarToggleButton::new().collapsed(collapsed).on_click(
