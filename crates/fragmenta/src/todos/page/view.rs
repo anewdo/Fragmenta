@@ -6,6 +6,7 @@ use chrono::Datelike;
 use fragmenta_core::model::Todo;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::calendar::Calendar;
 use gpui_kit::component::checkbox::Checkbox;
@@ -17,21 +18,14 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::time_field::TimeField;
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::{
-    ActiveTheme as _,
-    Disableable as _,
-    Icon,
-    Sizable,
-    Size,
-    h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable, Size, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{TodoForm, TodosPage};
-use crate::app::SettingsStore;
+use crate::settings::SettingsStore;
 
 /// Dialog 表单内容：内容输入 + 「指定时间区间」勾选 + 起止时间（勾选时显示）。
 ///
@@ -97,11 +91,11 @@ pub(super) fn form_footer(
         .justify_end()
         .gap_2()
         .child(
-            Button::new("todo-form-cancel").label("取消").on_click(
-                |_, window, cx| {
+            Button::new("todo-form-cancel")
+                .label("取消")
+                .on_click(|_, window, cx| {
                     window.close_dialog(cx);
-                },
-            ),
+                }),
         )
         .child(
             Button::new("todo-form-save")
@@ -162,8 +156,7 @@ impl TodosPage {
                 let todo = todo.clone();
                 move |_, window, cx| {
                     let _ = weak.update(cx, |page, cx| {
-                        let result =
-                            page.todos.update(cx, |state, cx| state.toggle(&todo, cx));
+                        let result = page.todos.update(cx, |state, cx| state.toggle(&todo, cx));
                         if let Err(err) = result {
                             window.push_notification(Notification::error(err.to_string()), cx);
                         }
@@ -202,9 +195,8 @@ impl TodosPage {
                         let weak = weak.clone();
                         let todo = todo.clone();
                         move |_, window, cx| {
-                            let _ = weak.update(cx, |page, cx| {
-                                page.open_edit(todo.clone(), window, cx)
-                            });
+                            let _ = weak
+                                .update(cx, |page, cx| page.open_edit(todo.clone(), window, cx));
                         }
                     }),
             )
@@ -243,7 +235,11 @@ impl TodosPage {
                         .text_size(px(12.))
                         .text_color(muted)
                         .when(done, |el| el.line_through())
-                        .child(format!("{} 至 {}", start.format("%H:%M"), end.format("%H:%M"))),
+                        .child(format!(
+                            "{} 至 {}",
+                            start.format("%H:%M"),
+                            end.format("%H:%M")
+                        )),
                 )
             })
             .into_any_element()
@@ -283,11 +279,7 @@ impl Render for TodosPage {
             )
         };
         // 内容阅读面：清单条目随正文字号档缩放（日历与辅助小字保持固定）
-        let content_px = cx
-            .global::<SettingsStore>()
-            .0
-            .read(cx)
-            .content_font_px();
+        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
 
         // 标题行：图标 + 标题 + 「今天」/「新建」
         let header = h_flex()
@@ -299,11 +291,7 @@ impl Render for TodosPage {
             .border_b_1()
             .border_color(border)
             .child(Icon::new(IconName::SquareCheckBig))
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("待办事项清单"),
-            )
+            .child(div().font_weight(FontWeight::MEDIUM).child("待办事项清单"))
             .child(div().flex_1())
             .child(
                 Button::new("todos-today")

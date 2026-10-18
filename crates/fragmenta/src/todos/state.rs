@@ -6,7 +6,12 @@ use chrono::{Local, NaiveDate, NaiveTime};
 use fragmenta_core::db::{Db, Result as DbResult};
 use fragmenta_core::model::Todo;
 
-use gpui_kit::{Context, EventEmitter};
+use gpui_kit::{Context, Entity, EventEmitter, Global};
+
+/// App 级共享待办 store（D3）：待办页持有；全部操作同步落库。
+pub(crate) struct TodosStore(pub(crate) Entity<TodosState>);
+
+impl Global for TodosStore {}
 
 /// 待办 store 事件：增删改落库成功后广播，页面订阅后重拉当日清单。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

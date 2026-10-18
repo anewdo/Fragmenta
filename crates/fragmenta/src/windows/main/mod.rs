@@ -1,26 +1,20 @@
 //! 主窗口 shell（架构 §5.8 / D7）：单例幂等 + `Page` 路由 + 四页常驻。
 //!
 //! 经 kit 门面 `gpui_kit::open_window` 开窗（自动包 `base::Root`，获得
-//! overlay hosting）；四页为 Phase 7 交付的空白占位页，实装见各页模块。
+//! overlay hosting）；业务页面由笔记、待办、设置功能模块提供。
 
 mod home;
-mod notes;
-mod settings;
-mod todos;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem, SidebarToggleButton};
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::editor::EditorMode;
-
+use crate::notes::NotesPage;
+use crate::settings::SettingsPage;
+use crate::todos::TodosPage;
 use home::HomePage;
-use notes::NotesPage;
-use settings::SettingsPage;
-use todos::TodosPage;
 
 /// 主窗口单例登记：窗口 handle 存于 App 全局，重复 `open` 激活既有窗口（D7）。
 struct MainWindow(AnyWindowHandle);
@@ -99,32 +93,36 @@ struct MainShell {
     todos: Entity<TodosPage>,
     settings: Entity<SettingsPage>,
     _appearance_sub: Subscription,
+    _notes_sub: Subscription,
 }
 
 impl MainShell {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let settings = cx.global::<crate::app::SettingsStore>().0.clone();
+        let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
         let appearance_sub =
             settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
         // 主窗口关闭语义（架构 §5.8）：close_to_quit 开 → 统一退出路径
         // （保存失败时保留窗口）；关（默认）→ 窗口关闭但进程托盘驻留
         // （QuitMode::Explicit），热键照常呼出磁贴，托盘可再开主窗口。
         window.on_window_should_close(cx, |_, cx| {
-            let settings = cx.global::<crate::app::SettingsStore>().0.clone();
-            if settings.read(cx).close_to_quit() || cx.has_global::<crate::app::QuitPrompt>() {
-                cx.defer(crate::app::quit_flushing);
+            let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+            if settings.read(cx).close_to_quit() || crate::app::quit::is_pending(cx) {
+                cx.defer(crate::app::quit::request_quit);
                 return false;
             }
             true
         });
+        let notes = cx.new(|cx| NotesPage::new(window, cx));
+        let notes_sub = cx.observe(&notes, |_, _, cx| cx.notify());
         Self {
             page: Page::Home,
             sidebar_collapsed: false,
             home: cx.new(|_| HomePage),
-            notes: cx.new(|cx| NotesPage::new(window, cx)),
+            notes,
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(SettingsPage::new),
             _appearance_sub: appearance_sub,
+            _notes_sub: notes_sub,
         }
     }
 
@@ -144,60 +142,14 @@ impl MainShell {
                 cx.notify();
             }))
     }
-
-    /// 笔记页标题栏右侧槽位：编辑器模式切换组（矩形边框分段按钮，
-    /// 控制 `NotesPage` 内 `NoteEditor` 的三模式）。
-    fn notes_header_slot(&self, cx: &Context<Self>) -> AnyElement {
-        let mode = self.notes.read(cx).editor_mode(cx);
-        let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
-            Button::new(id)
-                .ghost()
-                .small()
-                .compact()
-                .icon(icon)
-                .label(label)
-                .selected(mode == target)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.notes
-                        .update(cx, |page, cx| page.set_editor_mode(target, cx));
-                    // 按钮组随 shell 渲染，须通知 shell 刷新选中态
-                    cx.notify();
-                }))
-        };
-        h_flex()
-            .items_center()
-            .gap_0p5()
-            .p(px(1.))
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded(px(4.))
-            .child(button(
-                "editor-mode-source",
-                "源码",
-                IconName::PenLine,
-                EditorMode::Source,
-            ))
-            .child(button(
-                "editor-mode-preview",
-                "预览",
-                IconName::Eye,
-                EditorMode::Preview,
-            ))
-            .child(button(
-                "editor-mode-split",
-                "分屏",
-                IconName::Columns2,
-                EditorMode::Split,
-            ))
-            .into_any_element()
-    }
 }
 
 impl Render for MainShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
         // 笔记页标题栏右侧槽位（模式切换组）先于元素链构建，避免借用交叉
-        let notes_header_slot = (self.page == Page::Notes).then(|| self.notes_header_slot(cx));
+        let notes_header_slot = (self.page == Page::Notes)
+            .then(|| self.notes.update(cx, |page, cx| page.header_actions(cx)));
         div()
             .flex()
             .size_full()

@@ -13,11 +13,11 @@
 
 #[cfg(windows)]
 mod imp {
+    use gpui_kit::{App, Global};
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
-    use gpui_kit::{App, Global};
 
-    use crate::app;
+    use crate::app::quit;
     use crate::windows;
 
     /// 托盘对象存全局（非 `Send`，仅 gpui 主循环线程访问）。
@@ -50,7 +50,7 @@ mod imp {
             while let Ok(action) = rx.recv().await {
                 cx.update(|cx| match action {
                     TrayAction::OpenMain => windows::main::open(cx),
-                    TrayAction::Quit => app::quit_flushing(cx),
+                    TrayAction::Quit => quit::request_quit(cx),
                 });
             }
         })

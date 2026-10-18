@@ -23,15 +23,17 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::image_path::ImagePathPlugin;
-use super::source::SourceText;
-use crate::app::{ImageStore, NotesStore, SettingsStore};
-use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus, SettingsEvent};
+use crate::editor::ImageStore;
+use crate::editor::{ImagePathPlugin, SourceText};
+use crate::notes::NotesStore;
+use crate::notes::{NoteDraft, NoteKey, NotesEvent, NotesState, SaveStatus};
+use crate::settings::SettingsEvent;
+use crate::settings::SettingsStore;
 use crate::widgets::ResizableSplit;
 
 /// 编辑器模式（架构 §5.9）。
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EditorMode {
+pub(super) enum EditorMode {
     /// 源文本编辑。
     Source,
     /// markdown 渲染预览。
@@ -54,7 +56,7 @@ enum SaveIndicator {
 }
 
 /// 笔记编辑器：笔记页右栏，标题 + 正文 + 模式切换 + 防抖保存闭环。
-pub struct NoteEditor {
+pub(super) struct NoteEditor {
     /// 当前载入的笔记 id（None = 空态占位）。
     note_id: Option<i64>,
     notes: Entity<NotesState>,
@@ -89,8 +91,8 @@ impl NoteEditor {
             this.dispatch_save(cx);
         });
         // 订阅矩阵（§5.6）：只响应携带自己 key 的 Saved，不订阅 Changed
-        let saved_sub = cx.subscribe(&notes, |this, _, event: &Event, cx| {
-            if let Event::Saved { key, status, .. } = event
+        let saved_sub = cx.subscribe(&notes, |this, _, event: &NotesEvent, cx| {
+            if let NotesEvent::Saved { key, status, .. } = event
                 && let NoteKey::Note(id) = key
                 && this.note_id == Some(*id)
             {
@@ -124,12 +126,7 @@ impl NoteEditor {
         }
     }
 
-    /// 当前载入的笔记 id。
-    pub fn note_id(&self) -> Option<i64> {
-        self.note_id
-    }
-
-    /// 当前编辑器模式（切换按钮组由页面标题栏承载，见 `windows/main`）。
+    /// 当前编辑器模式，供笔记页构建标题栏操作区。
     pub fn mode(&self) -> EditorMode {
         self.mode
     }
@@ -224,11 +221,7 @@ impl Render for NoteEditor {
             )
         };
         // 内容阅读面：源文 / 预览正文随正文字号档缩放
-        let content_px = cx
-            .global::<SettingsStore>()
-            .0
-            .read(cx)
-            .content_font_px();
+        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
 
         // 空态：未选中笔记
         let Some(_) = self.note_id else {

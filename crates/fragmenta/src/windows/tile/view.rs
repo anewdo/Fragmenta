@@ -7,9 +7,12 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::{ImageStore, NotesStore, SettingsStore};
+use crate::editor::ImageStore;
 use crate::editor::SourceText;
-use crate::state::{Event, NoteDraft, NoteKey, NotesState, SaveStatus, SettingsEvent};
+use crate::notes::NotesStore;
+use crate::notes::{NoteDraft, NoteKey, NotesEvent, NotesState, SaveStatus};
+use crate::settings::SettingsEvent;
+use crate::settings::SettingsStore;
 use crate::win32;
 
 use super::{CORNER, open_new};
@@ -75,8 +78,8 @@ impl TileView {
             this.dispatch_save(cx);
         });
         // 订阅矩阵（§5.6）：磁贴只响应携带自己 key 的 Saved，不订阅 Changed
-        let saved_sub = cx.subscribe(&notes, |this, _, event: &Event, cx| {
-            if let Event::Saved { key, id, status } = event
+        let saved_sub = cx.subscribe(&notes, |this, _, event: &NotesEvent, cx| {
+            if let NotesEvent::Saved { key, id, status } = event
                 && key == &this.key
             {
                 match status {
@@ -260,11 +263,7 @@ impl Render for TileView {
             )
         };
         // 内容阅读面：标题 / 正文随正文字号档缩放（辅助小字保持固定）
-        let content_px = cx
-            .global::<SettingsStore>()
-            .0
-            .read(cx)
-            .content_font_px();
+        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
 
         // 保存状态文案（兼拖拽区内容；区域内无交互元素，§9 条目 2）
         let status_label = match self.status {
@@ -394,8 +393,11 @@ impl Render for TileView {
 #[cfg(test)]
 mod tests {
     use super::{SaveIndicator, TileView};
-    use crate::app::{ImageStore, NotesStore, SettingsStore};
-    use crate::state::{NoteDraft, NoteKey, NotesState, SaveStatus, SettingsState};
+    use crate::editor::ImageStore;
+    use crate::notes::NotesStore;
+    use crate::notes::{NoteDraft, NoteKey, NotesState, SaveStatus};
+    use crate::settings::SettingsState;
+    use crate::settings::SettingsStore;
     use fragmenta_core::{db::Db, media::Images, model::NoteFilter, settings::Settings};
     use gpui_kit::{
         AnyWindowHandle, AppContext as _, Entity, TestAppContext, VisualTestContext, WindowOptions,

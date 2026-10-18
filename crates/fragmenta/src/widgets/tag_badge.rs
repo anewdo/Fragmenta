@@ -9,7 +9,7 @@ use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{Icon, Sizable, Size};
 use gpui_kit::{App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Window};
 
-use crate::app::PaletteStore;
+use crate::utils::palette::PaletteStore;
 use crate::utils::palette::filled_foreground;
 
 /// 从全局取色盘按名字取色（映射进程内稳定，同名同色）。

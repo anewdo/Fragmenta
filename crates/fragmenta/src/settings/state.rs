@@ -13,10 +13,16 @@ use std::path::PathBuf;
 
 use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
-use gpui_kit::{Context, EventEmitter, Pixels, Subscription, Window, WindowAppearance, px};
+use gpui_kit::{
+    Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
+};
 
-use crate::app::SettingsStore;
-use crate::theme_schemes::{self, ThemeScheme};
+use crate::settings::theme_schemes::{self, ThemeScheme};
+
+/// App 级设置 store：运行期设置修改的唯一入口（D8 副作用集中）。
+pub(crate) struct SettingsStore(pub(crate) Entity<SettingsState>);
+
+impl Global for SettingsStore {}
 
 /// 设置变更广播：订阅方（设置页等）据此刷新展示。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,12 +137,8 @@ impl SettingsState {
         match self.settings.theme {
             ThemeMode::Light => Theme::change(KitThemeMode::Light, None, cx),
             ThemeMode::Dark => Theme::change(KitThemeMode::Dark, None, cx),
-            ThemeMode::Auto => {
-                Theme::change(kit_mode_of(cx.window_appearance()), None, cx)
-            }
-            ThemeMode::DouShaGreen => {
-                Self::apply_color_scheme(theme_schemes::dou_sha_green(), cx)
-            }
+            ThemeMode::Auto => Theme::change(kit_mode_of(cx.window_appearance()), None, cx),
+            ThemeMode::DouShaGreen => Self::apply_color_scheme(theme_schemes::dou_sha_green(), cx),
             ThemeMode::SkyBlue => Self::apply_color_scheme(theme_schemes::sky_blue(), cx),
         }
     }

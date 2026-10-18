@@ -13,8 +13,15 @@
 use std::collections::HashMap;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+use std::sync::Mutex;
 
-use gpui_kit::{Hsla, hsla, rgb};
+use gpui_kit::{Global, Hsla, hsla, rgb};
+
+/// 名字取色器（note-taxonomy-form）：卡片徽片与分类标签表单共用同一映射，
+/// 保证同屏同名同色；进程内稳定，不持久化。
+pub(crate) struct PaletteStore(pub(crate) Mutex<ColorPalette>);
+
+impl Global for PaletteStore {}
 
 /// 初始洗牌种子串：`RandomState` 每进程随机，固定串的哈希结果仍随进程而变。
 const INIT_SEED: &str = "fragmenta-palette-init";

@@ -18,7 +18,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
-use crate::app::PaletteStore;
+use crate::utils::palette::PaletteStore;
 use crate::utils::palette::filled_foreground;
 
 /// 可点击 Tag：Tag 为纯展示组件，移除交互以可点击容器包裹

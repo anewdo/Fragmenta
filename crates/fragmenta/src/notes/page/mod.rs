@@ -1,7 +1,7 @@
 //! 笔记页（Phase 9 / 10）：搜索筛选栏 + 笔记卡片列表 + 右栏 Markdown 编辑器。
 //!
 //! 数据流遵循架构铁律：render 内不查询——列表与筛选选项均为回调 /
-//! 订阅（`InputEvent::Change` / `Event::Changed`）时拉取的页字段快照；
+//! 订阅（`InputEvent::Change` / `NotesEvent::Changed`）时拉取的页字段快照；
 //! 页面 Entity 常驻于 shell，切换页面时筛选与滚动状态天然保留。
 //!
 //! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 选中载入 / 对话框 /
@@ -21,12 +21,14 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::{NotesStore, SettingsStore};
-use crate::editor::{EditorMode, NoteEditor};
-use crate::state::{Event, NoteKey, NotesState, SettingsEvent};
+use crate::notes::NotesStore;
+use crate::notes::editor::{EditorMode, NoteEditor};
+use crate::notes::{NoteKey, NotesEvent, NotesState};
+use crate::settings::SettingsEvent;
+use crate::settings::SettingsStore;
 
 /// 笔记页视图：筛选栏 + 卡片列表，常驻于主窗口 shell。
-pub struct NotesPage {
+pub(crate) struct NotesPage {
     notes: Entity<NotesState>,
     /// 搜索框状态（关键词真实值在 InputState，筛选时读取）。
     query_input: Entity<InputState>,
@@ -59,7 +61,7 @@ pub struct NotesPage {
 ///
 /// 随 Popover 打开而创建、关闭而整体释放：两个输入框为本次打开的全新
 /// 实体（不同卡片 / 多次打开互不残留），回车订阅随会话 drop 自动退订。
-pub struct TaxonomyForm {
+struct TaxonomyForm {
     note_id: i64,
     category_input: Entity<InputState>,
     tag_input: Entity<InputState>,
@@ -79,8 +81,8 @@ impl NotesPage {
             }
         });
         // 订阅矩阵（§5.6）：列表页响应 Changed 重拉列表与筛选选项
-        let changed_sub = cx.subscribe(&notes, |this, _, event: &Event, cx| {
-            if matches!(event, Event::Changed) {
+        let changed_sub = cx.subscribe(&notes, |this, _, event: &NotesEvent, cx| {
+            if matches!(event, NotesEvent::Changed) {
                 this.refresh(cx);
             }
         });
@@ -144,16 +146,6 @@ impl NotesPage {
         !self.query_input.read(cx).value().is_empty()
             || self.category.is_some()
             || !self.selected_tags.is_empty()
-    }
-
-    /// 编辑器当前模式（模式切换按钮组由主窗口标题栏承载）。
-    pub fn editor_mode(&self, cx: &App) -> EditorMode {
-        self.editor.read(cx).mode()
-    }
-
-    /// 切换编辑器模式。
-    pub fn set_editor_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
-        self.editor.update(cx, |editor, cx| editor.set_mode(mode, cx));
     }
 
     /// 选中卡片 → 编辑器载入（Phase 10）。

@@ -18,8 +18,10 @@ use gpui_kit::component::time_field::TimeFieldState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::{SettingsStore, TodosStore};
-use crate::state::{SettingsEvent, TodosEvent, TodosState};
+use crate::settings::SettingsEvent;
+use crate::settings::SettingsStore;
+use crate::todos::TodosStore;
+use crate::todos::{TodosEvent, TodosState};
 
 /// 新建 / 编辑共用的 Dialog 表单（每次打开为全新实体，对话框关闭即释放）。
 ///
@@ -49,7 +51,7 @@ fn default_interval() -> (NaiveTime, NaiveTime) {
 }
 
 /// 待办页视图：日历 + 选中日清单，常驻于主窗口 shell。
-pub struct TodosPage {
+pub(crate) struct TodosPage {
     todos: Entity<TodosState>,
     /// 左侧日历状态（初始选中今日）。
     calendar: Entity<CalendarState>,
@@ -181,7 +183,11 @@ impl TodosPage {
         window.open_dialog(cx, move |dialog, window, cx| {
             let is_edit = form.read(cx).editing.is_some();
             dialog
-                .title(if is_edit { "编辑待办" } else { "新建待办" })
+                .title(if is_edit {
+                    "编辑待办"
+                } else {
+                    "新建待办"
+                })
                 .width(px(380.))
                 .content({
                     let form = form.clone();

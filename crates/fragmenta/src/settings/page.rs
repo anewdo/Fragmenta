@@ -13,11 +13,11 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::app::SettingsStore;
-use crate::theme_schemes;
+use crate::settings::SettingsStore;
+use crate::settings::theme_schemes;
 
 /// 设置页视图：常驻于主窗口 shell，订阅设置广播刷新展示。
-pub struct SettingsPage {
+pub(crate) struct SettingsPage {
     _subscription: Subscription,
 }
 
@@ -69,13 +69,7 @@ impl Render for SettingsPage {
                     .child(
                         GroupBox::new()
                             .title("外观")
-                            .child(appearance_group(
-                                theme,
-                                font_scale,
-                                muted,
-                                primary,
-                                border,
-                            )),
+                            .child(appearance_group(theme, font_scale, muted, primary, border)),
                     )
                     .child(
                         GroupBox::new()
@@ -155,12 +149,14 @@ fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> 
     v_flex()
         .w_full()
         .gap_2()
-        .child(v_flex().gap_1().child("主题").child(
-            div()
-                .text_sm()
-                .text_color(muted)
-                .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
-        ))
+        .child(
+            v_flex().gap_1().child("主题").child(
+                div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
+            ),
+        )
         .child(
             h_flex()
                 .gap_3()
@@ -209,17 +205,21 @@ fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> 
                 ))
                 .child(theme_swatch(
                     "theme-pick-dousha",
-                    "豆沙绿",
+                    theme_schemes::dou_sha_green().label,
                     theme == ThemeMode::DouShaGreen,
                     ThemeMode::DouShaGreen,
-                    mock_preview(scheme_mock(&theme_schemes::dou_sha_green()), px(18.), px(12.)),
+                    mock_preview(
+                        scheme_mock(&theme_schemes::dou_sha_green()),
+                        px(18.),
+                        px(12.),
+                    ),
                     primary,
                     border,
                     muted,
                 ))
                 .child(theme_swatch(
                     "theme-pick-skyblue",
-                    "天空蓝",
+                    theme_schemes::sky_blue().label,
                     theme == ThemeMode::SkyBlue,
                     ThemeMode::SkyBlue,
                     mock_preview(scheme_mock(&theme_schemes::sky_blue()), px(18.), px(12.)),
@@ -263,15 +263,12 @@ fn theme_swatch(
                 .child(preview),
         )
         .child(
-            h_flex()
-                .w(px(88.))
-                .justify_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(if selected { primary } else { muted })
-                        .child(label),
-                ),
+            h_flex().w(px(88.)).justify_center().child(
+                div()
+                    .text_sm()
+                    .text_color(if selected { primary } else { muted })
+                    .child(label),
+            ),
         )
 }
 

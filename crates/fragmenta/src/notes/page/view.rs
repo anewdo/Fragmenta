@@ -17,14 +17,59 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, Size, h_f
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::NotesPage;
-use crate::app::SettingsStore;
+use super::{EditorMode, NotesPage};
+use crate::settings::SettingsStore;
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
 /// 卡片标签徽片上限：超过仅显示前 3 个 + "+N" 计数。
 const CARD_TAG_LIMIT: usize = 3;
 
 impl NotesPage {
+    /// 主窗口标题栏承载的编辑模式操作区。
+    pub(crate) fn header_actions(&self, cx: &Context<Self>) -> AnyElement {
+        let mode = self.editor.read(cx).mode();
+        let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .compact()
+                .icon(icon)
+                .label(label)
+                .selected(mode == target)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.editor
+                        .update(cx, |editor, cx| editor.set_mode(target, cx));
+                    cx.notify();
+                }))
+        };
+        h_flex()
+            .items_center()
+            .gap_0p5()
+            .p(px(1.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(px(4.))
+            .child(button(
+                "editor-mode-source",
+                "源码",
+                IconName::PenLine,
+                EditorMode::Source,
+            ))
+            .child(button(
+                "editor-mode-preview",
+                "预览",
+                IconName::Eye,
+                EditorMode::Preview,
+            ))
+            .child(button(
+                "editor-mode-split",
+                "分屏",
+                IconName::Columns2,
+                EditorMode::Split,
+            ))
+            .into_any_element()
+    }
+
     /// 分类筛选按钮 + 下拉：全部分类 + 各分类（单选可清）+ 重命名入口（选中时）。
     fn category_filter_button(&self, weak: &WeakEntity<Self>) -> AnyElement {
         let weak = weak.clone();
@@ -258,11 +303,7 @@ impl Render for NotesPage {
             )
         };
         // 内容阅读面：列表标题 / 摘要随正文字号档缩放（辅助小字保持固定）
-        let content_px = cx
-            .global::<SettingsStore>()
-            .0
-            .read(cx)
-            .content_font_px();
+        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
 
         // 行 1：搜索框 + 范围切换（标题 / 全文，selected 态分段）
         let search_row = h_flex()
