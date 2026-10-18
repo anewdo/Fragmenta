@@ -1,10 +1,3 @@
-//! 设置状态（架构 §5.6 / D8 副作用集中）：运行期 `Settings` 的唯一权威副本，
-//! 修改即持久化（settings.json，ADR-0004 锚点）。
-//!
-//! 主题模式的解析与应用（含 Auto 系统外观桥接、内置色系覆盖）收敛于此：
-//! 构造时应用一次（启动期唯一入口），此后每次修改即时生效于全部存活窗口
-//! （`Theme::change` / `Theme::update` 内部 `refresh_windows`，含已开磁贴）。
-//!
 //! 字号档位不写全局主题：kit 组件几何按 16px rem 基准设计，全局放大
 //! 会使 px 固定几何组件（日历等）文字溢出。字号只作用于内容阅读面，
 //! 由各内容组件经 [`SettingsState::content_font_px`] 显式应用。
@@ -12,11 +5,13 @@
 use std::path::PathBuf;
 
 use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
+use global_hotkey::hotkey::HotKey;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
 use gpui_kit::{
     Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
 };
 
+use crate::hotkey::{HotkeyController, HotkeyError};
 use crate::settings::theme_schemes::{self, ThemeScheme};
 
 /// App 级设置 store：运行期设置修改的唯一入口（D8 副作用集中）。
@@ -71,6 +66,11 @@ impl SettingsState {
         self.settings.close_to_quit
     }
 
+    /// 当前磁贴呼出热键。
+    pub fn tile_hotkey(&self) -> &str {
+        &self.settings.tile_hotkey
+    }
+
     /// 更新主题模式并立即生效于全部存活窗口（含已开磁贴），持久化 + 广播。
     pub fn set_theme(&mut self, mode: ThemeMode, cx: &mut Context<Self>) {
         if self.settings.theme == mode {
@@ -100,6 +100,26 @@ impl SettingsState {
         self.settings.close_to_quit = value;
         self.persist();
         cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 改绑磁贴呼出热键：先校验格式（纯修饰键等无效组合在解析层被拒），
+    /// 再经热键控制器注册（被其他程序占用时返回 `Err`，旧热键保持可用），
+    /// 成功后持久化 + 广播。返回 `Err` 时不落库。
+    ///
+    /// 热键控制器缺席（启动期注册失败的降级模式）时跳过注册直接落库，
+    /// 重启后新热键生效。
+    pub fn set_hotkey(&mut self, hotkey: &str, cx: &mut Context<Self>) -> Result<(), HotkeyError> {
+        hotkey.parse::<HotKey>().map_err(HotkeyError::Parse)?;
+        if self.settings.tile_hotkey == hotkey {
+            return Ok(());
+        }
+        if let Some(controller) = cx.try_global::<HotkeyController>() {
+            controller.rebind(hotkey)?;
+        }
+        self.settings.tile_hotkey = hotkey.to_string();
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+        Ok(())
     }
 
     /// 窗口创建时登记 Auto 桥接（主窗口与磁贴各自调用）：

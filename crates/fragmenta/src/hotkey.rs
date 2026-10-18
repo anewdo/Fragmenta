@@ -1,5 +1,3 @@
-//! 全局热键控制器（架构 §5.7）：磁贴呼出热键的注册、事件转发与重绑。
-//!
 //! 管理器经 `Box::leak` 保活整个进程（析构即注销热键）；事件链路：
 //! 独立线程阻塞读 crossbeam channel（过滤 `Pressed`）→ smol channel →
 //! gpui 主循环消费 → `windows::tile::open_new`。
@@ -81,30 +79,21 @@ impl HotkeyController {
         })
     }
 
-    /// 重绑热键：注销旧 → 注册新；注册失败时回滚并返回 `Err`，旧热键保持可用。
+    /// 重绑热键：先注册新 → 成功后注销旧；新键注册失败（被其他程序占用）
+    /// 时旧热键未被触碰，保持可用。
     pub fn rebind(&self, new_hotkey: &str) -> Result<(), HotkeyError> {
         let new = new_hotkey.parse::<HotKey>().map_err(HotkeyError::Parse)?;
         let old = *self.hotkey.borrow();
         if new == old {
             return Ok(());
         }
-        self.manager
-            .unregister(old)
-            .map_err(HotkeyError::Register)?;
-        match self.manager.register(new) {
-            Ok(()) => {
-                *self.hotkey.borrow_mut() = new;
-                Ok(())
-            }
-            Err(err) => {
-                // 回滚：旧热键刚被注销，重注册失败意味着热键能力全失，
-                // 此情形实际不可达，仍以返回错误告知调用方
-                let rollback = self.manager.register(old);
-                if rollback.is_err() {
-                    eprintln!("[fragmenta] 热键回滚失败，磁贴热键已不可用");
-                }
-                Err(HotkeyError::Register(err))
-            }
+        self.manager.register(new).map_err(HotkeyError::Register)?;
+        if let Err(err) = self.manager.unregister(old) {
+            // 新键已注册而旧键注销失败：收回新键，保持旧态并报错
+            let _ = self.manager.unregister(new);
+            return Err(HotkeyError::Register(err));
         }
+        *self.hotkey.borrow_mut() = new;
+        Ok(())
     }
 }
