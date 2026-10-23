@@ -13,7 +13,9 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, Size, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -25,9 +27,13 @@ use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 const CARD_TAG_LIMIT: usize = 3;
 
 impl NotesPage {
-    /// 主窗口标题栏承载的编辑模式操作区。
-    pub(crate) fn header_actions(&self, cx: &Context<Self>) -> AnyElement {
+    /// 页顶操作区：编辑器三模式切换组（渲染于笔记页顶部右侧）。
+    ///
+    /// 未选中笔记时整组禁用：编辑器空态占位与模式无关，可点的模式按钮
+    /// 会读成"点了没反应"；灰置直到选中卡片才可切。
+    fn editor_mode_group(&self, cx: &Context<Self>) -> AnyElement {
         let mode = self.editor.read(cx).mode();
+        let disabled = self.selected.is_none();
         let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
             Button::new(id)
                 .ghost()
@@ -36,6 +42,7 @@ impl NotesPage {
                 .icon(icon)
                 .label(label)
                 .selected(mode == target)
+                .disabled(disabled)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.editor
                         .update(cx, |editor, cx| editor.set_mode(target, cx));
@@ -447,13 +454,32 @@ impl Render for NotesPage {
             .child(filter_bar)
             .child(list_area);
 
-        // 双栏：分界线可拖动（左栏 400px 起步，钳制 ≥240px）
-        ResizableSplit::new(
-            "notes-page-split",
-            left.into_any_element(),
-            self.editor.clone().into_any_element(),
-        )
-        .left_size(px(400.))
-        .left_range(px(240.)..Pixels::MAX)
+        // 页顶操作区：编辑器三模式切换靠右；底部分割线将其与列表、
+        // 编辑器内容隔开；其下为列表 / 编辑器双栏
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_end()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(self.editor_mode_group(cx)),
+            )
+            .child(
+                // 双栏：分界线可拖动（左栏 400px 起步，钳制 ≥240px）
+                div().flex_1().min_h_0().child(
+                    ResizableSplit::new(
+                        "notes-page-split",
+                        left.into_any_element(),
+                        self.editor.clone().into_any_element(),
+                    )
+                    .left_size(px(400.))
+                    .left_range(px(240.)..Pixels::MAX),
+                ),
+            )
     }
 }
