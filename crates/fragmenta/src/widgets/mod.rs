@@ -2,6 +2,7 @@
 
 pub mod resizable_split;
 pub mod tag_badge;
+pub mod toast;
 
 pub use resizable_split::ResizableSplit;
 pub use tag_badge::{CategoryTag, TagBadge};

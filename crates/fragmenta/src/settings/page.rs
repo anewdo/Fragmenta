@@ -1,3 +1,7 @@
+use std::path::PathBuf;
+
+use fragmenta_core::export::{ExportFailure, ExportReport};
+use fragmenta_core::model::NoteFilter;
 use fragmenta_core::settings::{FontScale, ThemeMode};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::group_box::GroupBox;
@@ -8,9 +12,12 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use crate::editor::ImageStore;
 use crate::hotkey::HotkeyError;
+use crate::notes::NotesStore;
 use crate::settings::SettingsStore;
 use crate::settings::theme_schemes;
+use crate::widgets::toast::{Toast, ToastStore};
 
 /// 设置页视图：常驻于主窗口 shell，订阅设置广播刷新展示。
 pub(crate) struct SettingsPage {
@@ -25,6 +32,8 @@ pub(crate) struct SettingsPage {
     hotkey_error: Option<&'static str>,
     /// 数据目录迁移错误提示（红字展示）。
     data_dir_error: Option<String>,
+    /// 开机自启动开关错误提示（红字展示）。
+    autostart_error: Option<String>,
 }
 
 impl SettingsPage {
@@ -41,6 +50,7 @@ impl SettingsPage {
             hotkey_pending_mods: None,
             hotkey_error: None,
             data_dir_error: None,
+            autostart_error: None,
         }
     }
 
@@ -290,6 +300,75 @@ impl SettingsPage {
                             .child("将数据存储位置重置为 exe 所在目录"),
                     ),
             )
+            // 行 4：笔记导出为 md（ticket 07）——目录选择器选目录，后台导出，toast 报告
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().child("笔记导出为 md"))
+                    .child(
+                        Button::new("data-export-md").label("导出").on_click(cx.listener(
+                            |_, _, window, cx| {
+                                // 系统目录选择器（COM IFileOpenDialog）；取消则不导出
+                                let owner = crate::win32::window_hwnd(window);
+                                let Some(out_dir) = crate::win32::pick_folder(owner) else {
+                                    return;
+                                };
+                                run_export(out_dir, cx);
+                            },
+                        )),
+                    ),
+            )
+            .when_some(error, |el, err| {
+                el.child(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .child(div().text_sm().text_color(danger).child(err)),
+                )
+            })
+    }
+
+    /// "系统"组（ticket 08 / 09）：关闭主窗口语义开关、开机自启动开关
+    /// （注册表操作失败红字展示，开关状态不前移）。
+    fn system_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = cx.global::<SettingsStore>().0.read(cx);
+        let (close_to_quit, autostart) = (settings.close_to_quit(), settings.autostart());
+        let (muted, danger) = {
+            let colors = cx.theme();
+            (colors.muted_foreground, colors.danger)
+        };
+        let error = self.autostart_error.clone();
+
+        v_flex()
+            .w_full()
+            .gap_4()
+            .child(setting_row(
+                "关闭主窗口时直接退出",
+                "默认关闭：关闭主窗口后驻留系统托盘，热键呼出磁贴不受影响",
+                muted,
+                Switch::new("close-to-quit")
+                    .checked(close_to_quit)
+                    .on_click(|checked: &bool, _window, cx| {
+                        let settings = cx.global::<SettingsStore>().0.clone();
+                        settings.update(cx, |state, cx| state.set_close_to_quit(*checked, cx));
+                    }),
+            ))
+            .child(setting_row(
+                "开机自启动",
+                "登录 Windows 后静默启动并驻留托盘，不打开主窗口",
+                muted,
+                Switch::new("autostart")
+                    .checked(autostart)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        let store = cx.global::<SettingsStore>().0.clone();
+                        match store.update(cx, |state, cx| state.set_autostart(*checked, cx)) {
+                            Ok(()) => this.autostart_error = None,
+                            Err(err) => this.autostart_error = Some(err.to_string()),
+                        }
+                        cx.notify();
+                    })),
+            ))
             .when_some(error, |el, err| {
                 el.child(
                     h_flex()
@@ -301,14 +380,96 @@ impl SettingsPage {
     }
 }
 
+/// 执行导出（ticket 07）：待写草稿先落库并直查全量笔记，导出在后台线程
+/// 进行（应用可用不阻塞），完成后以 toast 报告（笔记数 / 资产数 / 失败项）。
+fn run_export(out_dir: PathBuf, cx: &mut Context<SettingsPage>) {
+    let notes_store = cx.global::<NotesStore>().0.clone();
+    // 导出内容与界面一致：先落库全部待写草稿（失败槽保留重试，不影响导出）
+    let _ = notes_store.update(cx, |state, cx| state.flush_all(cx));
+    let query = notes_store.update(cx, |state, _| state.notes(&NoteFilter::default()));
+    let images = cx.global::<ImageStore>().0.clone();
+    let toast = cx.global::<ToastStore>().0.clone();
+    match query {
+        Ok(notes) => {
+            // 导出在后台线程执行；完成后回主线程 toast 报告
+            let export = cx.background_spawn(async move {
+                fragmenta_core::export::export_notes(&notes, &out_dir, &images)
+            });
+            cx.spawn(async move |_, cx| {
+                let report = export.await;
+                let _ = toast.update(cx, |state, cx| {
+                    state.show(export_result_toast(report), cx);
+                });
+            })
+            .detach();
+        }
+        Err(err) => {
+            toast.update(cx, |state, cx| {
+                state.show(
+                    Toast {
+                        title: "导出失败".to_string(),
+                        detail: Some(format!("读取笔记列表失败：{err}")),
+                        failure: true,
+                    },
+                    cx,
+                );
+            });
+        }
+    }
+}
+
+/// 导出结果 → toast：成功项计数入标题，失败项入明细（最多列 3 条，余下计数）。
+fn export_result_toast(result: fragmenta_core::export::Result<ExportReport>) -> Toast {
+    match result {
+        Ok(report) => {
+            let failures = report.failures.len();
+            let title = if failures == 0 {
+                format!("已导出 {} 篇笔记、{} 张图片", report.notes, report.assets)
+            } else {
+                format!(
+                    "已导出 {} 篇笔记、{} 张图片，{} 项失败",
+                    report.notes, report.assets, failures
+                )
+            };
+            let detail = (failures > 0).then(|| {
+                let mut lines: Vec<String> = report
+                    .failures
+                    .iter()
+                    .take(3)
+                    .map(|failure| match failure {
+                        ExportFailure::Note { title, error, .. } => {
+                            format!("《{title}》：{error}")
+                        }
+                        ExportFailure::Asset { reference, error } => {
+                            format!("{reference}：{error}")
+                        }
+                    })
+                    .collect();
+                let rest = failures - lines.len();
+                if rest > 0 {
+                    lines.push(format!("……另有 {rest} 项失败"));
+                }
+                lines.join("\n")
+            });
+            Toast {
+                title,
+                detail,
+                failure: failures > 0,
+            }
+        }
+        // 批次级失败（输出目录不可建立 / 不可写）：尚未写出任何文件，无半成品
+        Err(err) => Toast {
+            title: "导出失败".to_string(),
+            detail: Some(format!("无法写入目标目录：{err}")),
+            failure: true,
+        },
+    }
+}
+
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = cx.global::<SettingsStore>().0.read(cx);
-        let (theme, font_scale, close_to_quit) = (
-            settings.theme(),
-            settings.font_scale(),
-            settings.close_to_quit(),
-        );
+        let (theme, font_scale) = (settings.theme(), settings.font_scale());
         let (muted, primary, border) = {
             let theme_colors = cx.theme();
             (
@@ -343,7 +504,7 @@ impl Render for SettingsPage {
                     .child(
                         GroupBox::new()
                             .title("系统")
-                            .child(system_group(close_to_quit, muted)),
+                            .child(self.system_group(cx)),
                     ),
             )
     }
@@ -563,21 +724,6 @@ fn font_scale_row(font_scale: FontScale, muted: Hsla) -> impl IntoElement {
                 settings.update(cx, |state, cx| state.set_font_scale(scale, cx));
             })
             .children(["小", "中", "大"]),
-    )
-}
-
-/// "系统"组：关闭主窗口时直接退出开关。
-fn system_group(close_to_quit: bool, muted: Hsla) -> impl IntoElement {
-    setting_row(
-        "关闭主窗口时直接退出",
-        "默认关闭：关闭主窗口后驻留系统托盘，热键呼出磁贴不受影响",
-        muted,
-        Switch::new("close-to-quit")
-            .checked(close_to_quit)
-            .on_click(|checked: &bool, _window, cx| {
-                let settings = cx.global::<SettingsStore>().0.clone();
-                settings.update(cx, |state, cx| state.set_close_to_quit(*checked, cx));
-            }),
     )
 }
 

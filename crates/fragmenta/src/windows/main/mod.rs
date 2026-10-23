@@ -14,6 +14,7 @@ use gpui_kit::*;
 use crate::notes::NotesPage;
 use crate::settings::SettingsPage;
 use crate::todos::TodosPage;
+use crate::widgets::toast::{ToastState, ToastStore};
 use home::HomePage;
 
 /// 主窗口单例登记：窗口 handle 存于 App 全局，重复 `open` 激活既有窗口（D7）。
@@ -92,8 +93,11 @@ struct MainShell {
     notes: Entity<NotesPage>,
     todos: Entity<TodosPage>,
     settings: Entity<SettingsPage>,
+    /// toast 浮层（如导出结果报告）：toast 状态变化时重绘 shell。
+    toast: Entity<ToastState>,
     _appearance_sub: Subscription,
     _notes_sub: Subscription,
+    _toast_sub: Subscription,
 }
 
 impl MainShell {
@@ -114,6 +118,8 @@ impl MainShell {
         });
         let notes = cx.new(|cx| NotesPage::new(window, cx));
         let notes_sub = cx.observe(&notes, |_, _, cx| cx.notify());
+        let toast = cx.global::<ToastStore>().0.clone();
+        let toast_sub = cx.observe(&toast, |_, _, cx| cx.notify());
         Self {
             page: Page::Home,
             sidebar_collapsed: false,
@@ -121,8 +127,10 @@ impl MainShell {
             notes,
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
+            toast,
             _appearance_sub: appearance_sub,
             _notes_sub: notes_sub,
+            _toast_sub: toast_sub,
         }
     }
 
@@ -152,6 +160,7 @@ impl Render for MainShell {
             .then(|| self.notes.update(cx, |page, cx| page.header_actions(cx)));
         div()
             .flex()
+            .relative()
             .size_full()
             .bg(cx.theme().background)
             .child(
@@ -206,5 +215,7 @@ impl Render for MainShell {
                         Page::Settings => self.settings.clone().into_any_element(),
                     })),
             )
+            // toast 浮层最后挂载：后绘制的 absolute 浮层盖在页面内容之上
+            .child(self.toast.clone())
     }
 }

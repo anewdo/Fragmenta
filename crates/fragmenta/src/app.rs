@@ -26,6 +26,7 @@ use crate::todos::TodosState;
 use crate::todos::TodosStore;
 use crate::utils::palette::ColorPalette;
 use crate::utils::palette::PaletteStore;
+use crate::widgets::toast::{ToastState, ToastStore};
 use crate::{tray, windows};
 
 /// exe 所在目录；`settings.json` 的锚点（数据目录线索唯一入口）。
@@ -34,6 +35,11 @@ fn exe_dir() -> PathBuf {
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 命令行是否携带 `--silent`（开机自启动 Run 键固定携带）。
+fn silent_start() -> bool {
+    std::env::args().any(|arg| arg == "--silent")
 }
 
 /// 应用入口；`main.rs` 仅调用此函数。
@@ -73,7 +79,12 @@ pub fn run() {
                 Err(err) => eprintln!("[fragmenta] 磁贴热键注册失败: {err}"),
             }
             tray::init(cx);
-            windows::main::open(cx);
+            // 静默启动（ticket 09，开机自启动 Run 键携带 `--silent`）：
+            // 不打开主窗口，仅托盘驻留；热键与托盘入口照常可用。
+            // 手动启动（无参数）正常打开主窗口。
+            if !silent_start() {
+                windows::main::open(cx);
+            }
         });
 }
 
@@ -85,5 +96,7 @@ fn init_stores(settings: &Settings, db: Arc<Db>, cx: &mut App) -> DbResult<()> {
     cx.set_global(TodosStore(todos));
     cx.set_global(ImageStore(Images::new(settings.data_dir.join("imgs"))));
     cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
+    let toast = cx.new(|_| ToastState::new());
+    cx.set_global(ToastStore(toast));
     Ok(())
 }

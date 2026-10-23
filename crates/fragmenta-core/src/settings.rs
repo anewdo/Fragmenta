@@ -41,6 +41,8 @@ pub struct Settings {
     pub tile_hotkey: String,
     /// 关闭主窗口时直接退出；默认 false（托盘驻留，架构 §5.8）。
     pub close_to_quit: bool,
+    /// 开机自启动；默认 false。应用层在开关开启时写入 HKCU Run 键
+    pub autostart: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +53,7 @@ impl Default for Settings {
             data_dir: default_data_dir(),
             tile_hotkey: default_tile_hotkey(),
             close_to_quit: false,
+            autostart: false,
         }
     }
 }

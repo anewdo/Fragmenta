@@ -13,6 +13,7 @@ use gpui_kit::{
     Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
 };
 
+use crate::autostart::AutostartError;
 use crate::editor::ImageStore;
 use crate::hotkey::{HotkeyController, HotkeyError};
 use crate::notes::{NotesStore, SaveStatus};
@@ -79,6 +80,11 @@ impl SettingsState {
         self.settings.close_to_quit
     }
 
+    /// 开机自启动开关当前值；默认 false。
+    pub fn autostart(&self) -> bool {
+        self.settings.autostart
+    }
+
     /// 当前磁贴呼出热键。
     pub fn tile_hotkey(&self) -> &str {
         &self.settings.tile_hotkey
@@ -113,6 +119,25 @@ impl SettingsState {
         self.settings.close_to_quit = value;
         self.persist();
         cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新开机自启动（ticket 09）：开启时写入 HKCU Run 键，命令行
+    /// `"{exe}" --silent`，每次开启按当前 exe 路径重写（便携 exe 移动后
+    /// 再次开启即刷新）；关闭时删除该键。注册表操作成功后才更新内存态
+    /// 并持久化 + 广播；失败返回 `Err`，内存态与 settings.json 均不变。
+    pub fn set_autostart(&mut self, value: bool, cx: &mut Context<Self>) -> Result<(), AutostartError> {
+        if self.settings.autostart == value {
+            return Ok(());
+        }
+        if value {
+            crate::autostart::enable()?;
+        } else {
+            crate::autostart::disable()?;
+        }
+        self.settings.autostart = value;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+        Ok(())
     }
 
     /// 数据目录热迁移（ADR-0002 / 0006，ticket 06）：应用不重启，已开磁贴
