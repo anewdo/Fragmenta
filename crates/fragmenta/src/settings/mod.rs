@@ -1,5 +1,6 @@
 //! 设置功能：运行期状态、设置页与内置色系。
 
+mod migrate;
 mod page;
 mod state;
 mod theme_schemes;

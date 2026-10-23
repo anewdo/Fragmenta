@@ -2,8 +2,10 @@
 //! 会使 px 固定几何组件（日历等）文字溢出。字号只作用于内容阅读面，
 //! 由各内容组件经 [`SettingsState::content_font_px`] 显式应用。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use fragmenta_core::db::Db;
 use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
 use global_hotkey::hotkey::HotKey;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
@@ -11,7 +13,10 @@ use gpui_kit::{
     Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
 };
 
+use crate::editor::ImageStore;
 use crate::hotkey::{HotkeyController, HotkeyError};
+use crate::notes::{NotesStore, SaveStatus};
+use crate::settings::migrate::{self, DataDirError};
 use crate::settings::theme_schemes::{self, ThemeScheme};
 
 /// App 级设置 store：运行期设置修改的唯一入口（D8 副作用集中）。
@@ -27,18 +32,26 @@ pub enum SettingsEvent {
 
 impl EventEmitter<SettingsEvent> for SettingsState {}
 
-/// 设置状态：持有当前 `Settings` 与 settings.json 路径。
+/// 设置状态：持有当前 `Settings`、settings.json 路径与共享数据库连接。
 pub struct SettingsState {
     settings: Settings,
     path: PathBuf,
+    /// 共享数据库门面（与 notes / todos store 同一 `Arc<Db>`），
+    /// 供 `set_data_dir` 迁移编排在线备份与连接热替换。
+    db: Arc<Db>,
 }
 
 impl SettingsState {
     /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
-    pub fn new(settings: Settings, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let mut state = Self { settings, path };
+    pub fn new(settings: Settings, path: PathBuf, db: Arc<Db>, cx: &mut Context<Self>) -> Self {
+        let mut state = Self { settings, path, db };
         state.apply_theme_mode(cx);
         state
+    }
+
+    /// 当前数据目录。
+    pub fn data_dir(&self) -> &Path {
+        &self.settings.data_dir
     }
 
     /// 当前主题模式。
@@ -100,6 +113,69 @@ impl SettingsState {
         self.settings.close_to_quit = value;
         self.persist();
         cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 数据目录热迁移（ADR-0002 / 0006，ticket 06）：应用不重启，已开磁贴
+    /// 后续保存自动落新库。
+    ///
+    /// 编排顺序：前置 `flush_all`（pending 草稿完整落库）→ 校验目标目录
+    /// （空或不存在、可写、canonicalize 后非同目录非嵌套；不存在则新建）→
+    /// 新路径全新连接在线备份 + 试开 → `imgs/` 随迁拷贝 → `settings.save`
+    /// （失败则清理目标产物并中止，内存态零改动、旧数据完整）→ `Db` 门面
+    /// 内连接热替换 + `ImageStore` 换根（store 零感知）→ 广播 `Changed` →
+    /// 删除旧目录数据文件（失败仅警告不回滚，旧文件夹保留）。
+    ///
+    /// 同步执行于 UI 线程：编排期间无并发写入库，无后台线程与写闸门。
+    pub fn set_data_dir(
+        &mut self,
+        new_dir: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Result<(), DataDirError> {
+        let old_dir = self.settings.data_dir.clone();
+        // 前置 flush_all：pending 草稿落旧库后再备份，迁移后新库数据完整；
+        // 落库失败即中止（内容保留在 pending，可重试）
+        if let Some(notes) = cx.try_global::<NotesStore>() {
+            let notes = notes.0.clone();
+            if notes.update(cx, |state, cx| state.flush_all(cx)) == SaveStatus::Failed {
+                return Err(DataDirError::FlushFailed);
+            }
+        }
+        // 目标目录校验（违规红字拒绝，数据不动）
+        migrate::validate_target(&old_dir, &new_dir)?;
+        // 在线备份到新路径全新连接并试开验证（失败清理目标产物）
+        let staged = match self.db.stage_migration(&new_dir.join("fragmenta.db")) {
+            Ok(staged) => staged,
+            Err(err) => {
+                let _ = migrate::remove_data_products(&new_dir);
+                return Err(DataDirError::Backup(err));
+            }
+        };
+        // imgs 图库随迁（失败先关暂存连接再清理目标产物，Windows 文件占用）
+        if let Err(err) = migrate::copy_imgs(&old_dir, &new_dir) {
+            drop(staged);
+            let _ = migrate::remove_data_products(&new_dir);
+            return Err(err);
+        }
+        // settings.save：失败清理目标产物并中止（内存态零改动、旧数据完整）
+        self.settings.data_dir = new_dir.clone();
+        if let Err(err) = self.settings.save(&self.path) {
+            self.settings.data_dir = old_dir;
+            drop(staged);
+            let _ = migrate::remove_data_products(&new_dir);
+            return Err(DataDirError::Save(err));
+        }
+        // 连接热替换 + 图库换根：全应用共享 Arc<Db> 与 ImageStore 即时生效
+        self.db.swap_connection(staged);
+        cx.set_global(ImageStore(fragmenta_core::media::Images::new(
+            new_dir.join("imgs"),
+        )));
+        cx.emit(SettingsEvent::Changed);
+        // 收尾：删除旧目录数据文件（旧文件夹及无关文件保留）；
+        // 删除失败仅警告，已提交的迁移不回滚
+        if let Err(err) = migrate::remove_data_products(&old_dir) {
+            eprintln!("[fragmenta] 迁移后清理旧数据文件失败（可手动清理）: {err}");
+        }
+        Ok(())
     }
 
     /// 改绑磁贴呼出热键：先校验格式（纯修饰键等无效组合在解析层被拒），

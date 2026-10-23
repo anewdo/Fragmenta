@@ -204,7 +204,12 @@ mod tests {
         };
         let images = Images::new(settings.data_dir.join("imgs"));
         let settings = cx.new(|cx| {
-            SettingsState::new(settings, PathBuf::from("temp/quit-test-settings.json"), cx)
+            SettingsState::new(
+                settings,
+                PathBuf::from("temp/quit-test-settings.json"),
+                Arc::new(Db::open_in_memory().unwrap()),
+                cx,
+            )
         });
         notes.update(cx, |state, cx| {
             state.save(

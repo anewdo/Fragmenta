@@ -77,13 +77,170 @@ pub fn cursor_placement() -> Option<CursorPlacement> {
 }
 
 /// 取窗口原生 HWND。
-fn hwnd_of(window: &mut Window) -> Option<isize> {
+pub fn window_hwnd(window: &mut Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let handle = window.window_handle().ok()?;
     if let RawWindowHandle::Win32(win32) = handle.as_raw() {
         Some(win32.hwnd.get())
     } else {
         None
+    }
+}
+
+/// 系统目录选择对话框（COM `IFileOpenDialog` + `FOS_PICKFOLDERS`，ticket 06）。
+/// 用户取消或失败返回 None（设置页保持原输入）。
+///
+/// windows-sys 0.61 不再生成 COM 接口定义，此处按 SDK 头文件
+/// （shobjidl_core.h，经 windows-0.61.3 生成源核对）以槽位直呼 vtable：
+/// 槽位 0-2 = IUnknown（QI / AddRef / Release），3 = IModalWindow::Show，
+/// 9 = IFileDialog::SetOptions，10 = GetOptions，20 = GetResult；
+/// IShellItem 槽位 5 = GetDisplayName。
+pub fn pick_folder(owner_hwnd: Option<isize>) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        use std::path::PathBuf;
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::System::Com::{
+            CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+            CoTaskMemFree, CoUninitialize,
+        };
+        use windows_sys::Win32::UI::Shell::{FOS_PICKFOLDERS, FileOpenDialog, SIGDN_FILESYSPATH};
+        use windows_sys::core::{GUID, HRESULT};
+
+        const IID_IFILE_OPEN_DIALOG: GUID = GUID::from_u128(0xd57c7288_d4ad_4768_be02_9d969532d960);
+        const S_OK: HRESULT = 0;
+        const S_FALSE: HRESULT = 1;
+
+        type ShowFn = unsafe extern "system" fn(*mut c_void, HWND) -> HRESULT;
+        type SetOptionsFn = unsafe extern "system" fn(*mut c_void, u32) -> HRESULT;
+        type GetOptionsFn = unsafe extern "system" fn(*mut c_void, *mut u32) -> HRESULT;
+        type GetResultFn = unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> HRESULT;
+        type GetDisplayNameFn =
+            unsafe extern "system" fn(*mut c_void, i32, *mut *mut u16) -> HRESULT;
+        type ReleaseFn = unsafe extern "system" fn(*mut c_void) -> u32;
+
+        /// 取对象 vtable 第 index 槽位的函数指针。
+        unsafe fn slot(this: *mut c_void, index: usize) -> *mut c_void {
+            unsafe {
+                let vtable = *(this as *const *const *mut c_void);
+                *vtable.add(index)
+            }
+        }
+
+        unsafe fn release(this: *mut c_void) {
+            unsafe {
+                if !this.is_null() {
+                    let release: ReleaseFn = std::mem::transmute(slot(this, 2));
+                    release(this);
+                }
+            }
+        }
+
+        unsafe {
+            // COM 单元初始化：S_OK = 本次初始化（收尾须配对 CoUninitialize）；
+            // S_FALSE = 线程已初始化（gpui 主线程常态），不配对反初始化
+            let hr = CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED as u32);
+            if hr < 0 && hr != S_FALSE {
+                return None;
+            }
+            let need_uninit = hr == S_OK;
+
+            let mut dialog: *mut c_void = std::ptr::null_mut();
+            let result = (|| {
+                if CoCreateInstance(
+                    &FileOpenDialog,
+                    std::ptr::null_mut(),
+                    CLSCTX_INPROC_SERVER,
+                    &IID_IFILE_OPEN_DIALOG,
+                    &mut dialog,
+                ) < 0
+                    || dialog.is_null()
+                {
+                    return None;
+                }
+                // 在既有选项上追加"仅选目录"
+                let get_options: GetOptionsFn = std::mem::transmute(slot(dialog, 10));
+                let mut options: u32 = 0;
+                get_options(dialog, &mut options);
+                let set_options: SetOptionsFn = std::mem::transmute(slot(dialog, 9));
+                set_options(dialog, options | FOS_PICKFOLDERS);
+                // 模态选择：任何非零返回（用户取消 0x8007007A 或失败）都视为无选择
+                let show: ShowFn = std::mem::transmute(slot(dialog, 3));
+                let owner = owner_hwnd.map_or(std::ptr::null_mut(), |hwnd| hwnd as HWND);
+                if show(dialog, owner) != 0 {
+                    return None;
+                }
+                let get_result: GetResultFn = std::mem::transmute(slot(dialog, 20));
+                let mut item: *mut c_void = std::ptr::null_mut();
+                if get_result(dialog, &mut item) < 0 || item.is_null() {
+                    return None;
+                }
+                let get_display_name: GetDisplayNameFn = std::mem::transmute(slot(item, 5));
+                let mut path: *mut u16 = std::ptr::null_mut();
+                if get_display_name(item, SIGDN_FILESYSPATH, &mut path) < 0 || path.is_null() {
+                    release(item);
+                    return None;
+                }
+                let mut len = 0usize;
+                while *path.add(len) != 0 {
+                    len += 1;
+                }
+                let picked = PathBuf::from(String::from_utf16_lossy(std::slice::from_raw_parts(
+                    path, len,
+                )));
+                CoTaskMemFree(path.cast());
+                release(item);
+                Some(picked)
+            })();
+
+            release(dialog);
+            if need_uninit {
+                CoUninitialize();
+            }
+            result
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = owner_hwnd;
+        None
+    }
+}
+
+/// 经 shell 打开文件夹（一键打开当前数据目录）：`ShellExecuteW` 的
+/// "open" 动词走用户环境注册的文件夹打开关联（第三方文件资源管理器
+/// 通常接管 Directory 关联），失败（返回值 ≤ 32）才回退 explorer.exe。
+pub fn open_folder(path: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        let verb: Vec<u16> = "open\0".encode_utf16().collect();
+        let file: Vec<u16> = path
+            .display()
+            .to_string()
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if result as usize <= 32 {
+            let _ = std::process::Command::new("explorer.exe").arg(path).spawn();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
     }
 }
 
@@ -94,7 +251,7 @@ pub fn set_topmost(window: &mut Window, topmost: bool) -> bool {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
         };
-        let Some(hwnd) = hwnd_of(window) else {
+        let Some(hwnd) = window_hwnd(window) else {
             return false;
         };
         let insert_after = if topmost {
@@ -139,7 +296,7 @@ pub fn set_rounded_region(window: &mut Window, radius: f32) -> bool {
         use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
         use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
 
-        let Some(hwnd) = hwnd_of(window) else {
+        let Some(hwnd) = window_hwnd(window) else {
             return false;
         };
         let mut window_rect: RECT = unsafe { std::mem::zeroed() };
@@ -335,7 +492,7 @@ pub fn install_edge_subclass(window: &mut Window, edge: f32, corner: f32) -> boo
     {
         use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_WNDPROC, SetWindowLongPtrW};
 
-        let Some(hwnd_isize) = hwnd_of(window) else {
+        let Some(hwnd_isize) = window_hwnd(window) else {
             return false;
         };
         let mut map = EDGE_SUBCLASSES.lock().expect("边缘感应登记表锁状态异常");

@@ -2026,6 +2026,7 @@ dependencies = [
  "gpui-kit",
  "raw-window-handle",
  "smol",
+ "thiserror 2.0.21",
  "tray-icon",
  "windows-sys 0.61.2",
 ]

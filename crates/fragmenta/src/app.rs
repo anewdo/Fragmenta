@@ -49,15 +49,23 @@ pub fn run() {
             gpui_kit::init(cx);
             // 进程常驻（spike ⑤ 结论）：末窗关闭不退出，退出走统一退出路径
             cx.set_quit_mode(QuitMode::Explicit);
+            // 数据库先于设置 store 打开：SettingsState 持有共享 Arc<Db>，
+            // 供数据目录迁移编排在线备份与连接热替换（ticket 06）
+            let db_path = settings.data_dir.join("fragmenta.db");
+            let db = match Db::open(&db_path) {
+                Ok(db) => Arc::new(db),
+                Err(err) => {
+                    eprintln!("[fragmenta] 数据库打开失败（{}）: {err}", db_path.display());
+                    std::process::exit(1);
+                }
+            };
             // 设置 store 构造即应用主题与字号（D8 副作用集中，无启动期双轨）
-            let settings_state =
-                cx.new(|cx| SettingsState::new(settings.clone(), settings_path.clone(), cx));
+            let settings_state = cx.new(|cx| {
+                SettingsState::new(settings.clone(), settings_path.clone(), db.clone(), cx)
+            });
             cx.set_global(SettingsStore(settings_state));
-            if let Err(err) = init_stores(&settings, cx) {
-                eprintln!(
-                    "[fragmenta] 数据库打开失败（{}）: {err}",
-                    settings.data_dir.join("fragmenta.db").display()
-                );
+            if let Err(err) = init_stores(&settings, db, cx) {
+                eprintln!("[fragmenta] store 初始化失败: {err}");
                 std::process::exit(1);
             }
             match HotkeyController::init(&settings.tile_hotkey, cx) {
@@ -69,10 +77,8 @@ pub fn run() {
         });
 }
 
-/// 建立共享 store，数据库初始化失败时由启动入口决定终止。
-fn init_stores(settings: &Settings, cx: &mut App) -> DbResult<()> {
-    let db_path = settings.data_dir.join("fragmenta.db");
-    let db = Arc::new(Db::open(&db_path)?);
+/// 建立共享 store（数据库连接已由启动入口打开并注入）。
+fn init_stores(settings: &Settings, db: Arc<Db>, cx: &mut App) -> DbResult<()> {
     let notes = cx.new(|_| NotesState::new(db.clone()));
     let todos = cx.new(|_| TodosState::new(db));
     cx.set_global(NotesStore(notes));

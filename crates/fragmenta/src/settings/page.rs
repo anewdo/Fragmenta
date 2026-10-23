@@ -1,4 +1,5 @@
 use fragmenta_core::settings::{FontScale, ThemeMode};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -22,10 +23,12 @@ pub(crate) struct SettingsPage {
     hotkey_pending_mods: Option<String>,
     /// 热键录入错误提示（红字展示）。
     hotkey_error: Option<&'static str>,
+    /// 数据目录迁移错误提示（红字展示）。
+    data_dir_error: Option<String>,
 }
 
 impl SettingsPage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = cx.global::<SettingsStore>().0.clone();
         let subscription = cx.subscribe(&settings, |_, _, _, cx| {
             // 设置变更（含本页操作）→ 刷新展示
@@ -37,6 +40,7 @@ impl SettingsPage {
             hotkey_listening: false,
             hotkey_pending_mods: None,
             hotkey_error: None,
+            data_dir_error: None,
         }
     }
 
@@ -115,8 +119,8 @@ impl SettingsPage {
                         this.hotkey_error = None;
                     }
                     // 修饰键自身按下：和弦进行中，展示由 on_modifiers_changed 维护
-                    "shift" | "control" | "alt" | "platform" | "meta" | "super" | "cmd"
-                    | "win" | "function" | "fn" => {}
+                    "shift" | "control" | "alt" | "platform" | "meta" | "super" | "cmd" | "win"
+                    | "function" | "fn" => {}
                     _ => {
                         this.hotkey_pending_mods = None;
                         let candidate = hotkey_candidate(stroke);
@@ -175,6 +179,126 @@ impl SettingsPage {
                 )
             })
     }
+    /// "数据"组（ticket 06）：三行布局——当前目录（可打开）／更改存储路径
+    /// （目录选择器选完即迁移）／重置为默认位置；迁移错误红字展示。
+    fn data_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (muted, danger) = {
+            let colors = cx.theme();
+            (colors.muted_foreground, colors.danger)
+        };
+        let current = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .data_dir()
+            .display()
+            .to_string();
+        let error = self.data_dir_error.clone();
+
+        v_flex()
+            .w_full()
+            .gap_4()
+            // 行 1：当前数据存储目录 + 打开
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().flex_1().child("当前数据存储目录"))
+                            .child(Button::new("data-dir-open").label("打开当前目录").on_click(
+                                |_, _, cx| {
+                                    let dir = cx
+                                        .global::<SettingsStore>()
+                                        .0
+                                        .read(cx)
+                                        .data_dir()
+                                        .to_path_buf();
+                                    crate::win32::open_folder(&dir);
+                                },
+                            )),
+                    )
+                    .child(div().text_sm().text_color(muted).child(current)),
+            )
+            // 行 2：更改存储路径（目录选择器选完即迁移）
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().child("更改存储路径"))
+                    .child(
+                        Button::new("data-dir-change").label("选择新位置").on_click(cx.listener(
+                            |this, _, window, cx| {
+                                // 系统目录选择器（COM IFileOpenDialog）；取消则不迁移
+                                let owner = crate::win32::window_hwnd(window);
+                                let Some(picked) = crate::win32::pick_folder(owner) else {
+                                    return;
+                                };
+                                let store = cx.global::<SettingsStore>().0.clone();
+                                match store.update(cx, |state, cx| state.set_data_dir(picked, cx))
+                                {
+                                    Ok(()) => this.data_dir_error = None,
+                                    Err(err) => this.data_dir_error = Some(err.to_string()),
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
+            // 行 3：重置为默认位置（exe 旁 data/）
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().flex_1().child("重置为默认位置"))
+                            .child(
+                                Button::new("data-dir-reset").label("重置").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        // 默认位置与启动逻辑同源（{exe_dir}/data）
+                                        let target =
+                                            fragmenta_core::settings::Settings::default().data_dir;
+                                        let store = cx.global::<SettingsStore>().0.clone();
+                                        let already_default = store.read_with(cx, |state, _| {
+                                            state.data_dir() == target
+                                        });
+                                        if already_default {
+                                            return;
+                                        }
+                                        match store.update(cx, |state, cx| {
+                                            state.set_data_dir(target, cx)
+                                        }) {
+                                            Ok(()) => this.data_dir_error = None,
+                                            Err(err) => {
+                                                this.data_dir_error = Some(err.to_string())
+                                            }
+                                        }
+                                        cx.notify();
+                                    }),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("将数据存储位置重置为 exe 所在目录"),
+                    ),
+            )
+            .when_some(error, |el, err| {
+                el.child(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .child(div().text_sm().text_color(danger).child(err)),
+                )
+            })
+    }
 }
 
 impl Render for SettingsPage {
@@ -214,11 +338,8 @@ impl Render for SettingsPage {
                             .title("外观")
                             .child(appearance_group(theme, font_scale, muted, primary, border)),
                     )
-                    .child(
-                        GroupBox::new()
-                            .title("快捷键")
-                            .child(self.hotkey_group(cx)),
-                    )
+                    .child(GroupBox::new().title("快捷键").child(self.hotkey_group(cx)))
+                    .child(GroupBox::new().title("数据").child(self.data_group(cx)))
                     .child(
                         GroupBox::new()
                             .title("系统")

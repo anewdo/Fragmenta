@@ -44,6 +44,9 @@ pub enum DbError {
     /// 库中待办的时间区间列非法（部分空置或超出 0–1439 分钟范围）。
     #[error("库中时间区间损坏：待办 {0}")]
     CorruptInterval(i64),
+    /// 迁移备份产物完整性检查未通过。
+    #[error("数据库完整性检查失败：{0}")]
+    IntegrityCheck(String),
     /// 文件系统错误（建目录 / 打开文件）。
     #[error("IO 错误：{0}")]
     Io(#[from] std::io::Error),
@@ -138,6 +141,36 @@ impl Db {
         let backup = rusqlite::backup::Backup::new(&src, &mut dst_conn)?;
         backup.run_to_completion(128, Duration::from_millis(1), None)?;
         Ok(())
+    }
+
+    /// 数据目录迁移第一步（ADR-0002 / 0006）：在线备份到 new_path 全新连接，
+    /// 并以 `PRAGMA quick_check` 试开验证备份产物完整性；返回暂存实例。
+    ///
+    /// 暂存连接此刻未换入，迁移编排继续（imgs 随迁、settings.save），全部
+    /// 成功后经 [`Db::swap_connection`] 收尾；任一后续步骤失败则丢弃暂存，
+    /// 旧连接原样保留。
+    pub fn stage_migration(&self, new_path: &Path) -> Result<Db> {
+        let staged = Db::open(new_path)?;
+        self.backup_to(&staged)?;
+        let check: String = {
+            let conn = staged.conn.lock().unwrap();
+            conn.query_row("PRAGMA quick_check", [], |row| row.get(0))?
+        };
+        if check != "ok" {
+            return Err(DbError::IntegrityCheck(check));
+        }
+        Ok(staged)
+    }
+
+    /// 数据目录迁移收尾（ADR-0002 补注）：把已验证的暂存连接换入门面内部
+    /// （锁 mutex 单临界区），旧连接随暂存实例释放关闭。
+    ///
+    /// 全应用共享的 `Arc<Db>` 句柄不变，持有方零感知；调用后本实例的后续
+    /// 读写全部落到暂存的数据库文件。
+    pub fn swap_connection(&self, staged: Db) {
+        let mut guard = self.conn.lock().unwrap();
+        let mut staged_guard = staged.conn.lock().unwrap();
+        std::mem::swap(&mut *guard, &mut *staged_guard);
     }
 
     /// 连接级初始化：外键约束 + 版本迁移。

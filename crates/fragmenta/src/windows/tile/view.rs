@@ -412,6 +412,7 @@ mod tests {
             SettingsState::new(
                 Settings::default(),
                 PathBuf::from("temp/tile-test-settings.json"),
+                db.clone(),
                 cx,
             )
         });

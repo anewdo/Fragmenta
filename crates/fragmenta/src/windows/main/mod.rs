@@ -120,7 +120,7 @@ impl MainShell {
             home: cx.new(|_| HomePage),
             notes,
             todos: cx.new(|cx| TodosPage::new(window, cx)),
-            settings: cx.new(SettingsPage::new),
+            settings: cx.new(|cx| SettingsPage::new(window, cx)),
             _appearance_sub: appearance_sub,
             _notes_sub: notes_sub,
         }
