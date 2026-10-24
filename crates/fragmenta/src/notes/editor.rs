@@ -19,7 +19,7 @@ use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, ResizableState, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -71,6 +71,7 @@ pub(super) struct NoteEditor {
     _saved_sub: Subscription,
     /// 正文字号档变化 → 源文 / 预览随 content_font_px 重渲染。
     _settings_sub: Subscription,
+    split_state: Entity<ResizableState>,
 }
 
 impl NoteEditor {
@@ -123,6 +124,7 @@ impl NoteEditor {
             _word_sub: word_sub,
             _saved_sub: saved_sub,
             _settings_sub: settings_sub,
+            split_state: cx.new(|_| ResizableState::default()),
         }
     }
 
@@ -222,6 +224,8 @@ impl Render for NoteEditor {
         };
         // 内容阅读面：源文 / 预览正文随正文字号档缩放
         let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        let editor_source_width = cx.global::<SettingsStore>().0.read(cx).editor_source_width();
+        let split_state = self.split_state.clone();
 
         // 空态：未选中笔记
         let Some(_) = self.note_id else {
@@ -285,6 +289,14 @@ impl Render for NoteEditor {
                 source,
                 self.preview_element(cx).into_any_element(),
             )
+            .with_state(split_state)
+            .left_size(editor_source_width)
+            .on_resize(|state, _, cx| {
+                if let Some(width) = state.read(cx).sizes().first().copied() {
+                    let settings = cx.global::<SettingsStore>().0.clone();
+                    settings.update(cx, |state, _| state.set_editor_source_width(width));
+                }
+            })
             .into_any_element(),
         };
 

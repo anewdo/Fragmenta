@@ -85,6 +85,39 @@ impl SettingsState {
         self.settings.autostart
     }
 
+    pub fn sidebar_width(&self) -> Pixels {
+        px(self.settings.layout.sidebar_width)
+    }
+
+    pub fn notes_list_width(&self) -> Pixels {
+        px(self.settings.layout.notes_list_width)
+    }
+
+    pub fn editor_source_width(&self) -> Pixels {
+        px(self.settings.layout.editor_source_width)
+    }
+
+    pub fn set_sidebar_width(&mut self, width: Pixels) {
+        self.settings.layout.sidebar_width = width.as_f32();
+        self.persist();
+    }
+
+    pub fn set_notes_list_width(&mut self, width: Pixels) {
+        self.settings.layout.notes_list_width = width.as_f32();
+        self.persist();
+    }
+
+    pub fn set_editor_source_width(&mut self, width: Pixels) {
+        self.settings.layout.editor_source_width = width.as_f32();
+        self.persist();
+    }
+
+    pub fn shrink_database_memory(&self) {
+        if let Err(err) = self.db.shrink_memory() {
+            eprintln!("[fragmenta] 释放 SQLite 页缓存失败: {err}");
+        }
+    }
+
     /// 当前磁贴呼出热键。
     pub fn tile_hotkey(&self) -> &str {
         &self.settings.tile_hotkey

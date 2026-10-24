@@ -1,12 +1,8 @@
-//! 笔记页（Phase 9 / 10）：搜索筛选栏 + 笔记卡片列表 + 右栏 Markdown 编辑器。
+//! 笔记页：搜索筛选栏 + 笔记卡片列表 + 右栏 Markdown 编辑器。
 //!
-//! 数据流遵循架构铁律：render 内不查询——列表与筛选选项均为回调 /
+//! 数据流遵循架构：render 内不查询——列表与筛选选项均为回调 /
 //! 订阅（`InputEvent::Change` / `NotesEvent::Changed`）时拉取的页字段快照；
 //! 页面 Entity 常驻于 shell，切换页面时筛选与滚动状态天然保留。
-//!
-//! 本文件承载状态与交互逻辑（订阅 / 快照拉取 / 选中载入 / 对话框 /
-//! 分类标签表单会话），视图构建（筛选栏 / 卡片 / 空态 / 双栏 render）
-//! 见 `view.rs`，分类与标签编辑表单（Popover 内容）见 `taxonomy_form.rs`。
 
 mod taxonomy_form;
 mod view;
@@ -14,6 +10,7 @@ mod view;
 use fragmenta_core::model::{Note, NoteFilter, SearchScope};
 
 use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::ResizableState;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::DialogContent;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -49,6 +46,7 @@ pub(crate) struct NotesPage {
     editor: Entity<NoteEditor>,
     /// 编辑器正打开的笔记 id（None = 空态占位）。
     selected: Option<i64>,
+    split_state: Entity<ResizableState>,
     /// 重命名对话框 key 序号：每次打开生成全新 InputState，免受上次编辑值残留。
     rename_seq: usize,
     _query_sub: Subscription,
@@ -104,6 +102,7 @@ impl NotesPage {
             taxonomy_form: None,
             editor: cx.new(|cx| NoteEditor::new(window, cx)),
             selected: None,
+            split_state: cx.new(|_| ResizableState::default()),
             rename_seq: 0,
             _query_sub: query_sub,
             _changed_sub: changed_sub,

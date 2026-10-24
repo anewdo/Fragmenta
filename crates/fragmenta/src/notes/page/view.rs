@@ -14,7 +14,8 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -311,6 +312,8 @@ impl Render for NotesPage {
         };
         // 内容阅读面：列表标题 / 摘要随正文字号档缩放（辅助小字保持固定）
         let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        let notes_list_width = cx.global::<SettingsStore>().0.read(cx).notes_list_width();
+        let split_state = self.split_state.clone();
 
         // 行 1：搜索框 + 范围切换（标题 / 全文，selected 态分段）
         let search_row = h_flex()
@@ -477,8 +480,15 @@ impl Render for NotesPage {
                         left.into_any_element(),
                         self.editor.clone().into_any_element(),
                     )
-                    .left_size(px(400.))
-                    .left_range(px(240.)..Pixels::MAX),
+                    .with_state(split_state)
+                    .left_size(notes_list_width)
+                    .left_range(px(240.)..Pixels::MAX)
+                    .on_resize(|state, _, cx| {
+                        if let Some(width) = state.read(cx).sizes().first().copied() {
+                            let settings = cx.global::<SettingsStore>().0.clone();
+                            settings.update(cx, |state, _| state.set_notes_list_width(width));
+                        }
+                    }),
                 ),
             )
     }
