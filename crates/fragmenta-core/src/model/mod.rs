@@ -2,10 +2,12 @@
 
 mod filter;
 mod note;
+mod taxonomy;
 mod todo;
 
 pub use filter::{DayActivity, NoteFilter, SearchScope};
 pub use note::Note;
+pub use taxonomy::TaxonomyEntry;
 pub use todo::Todo;
 
 use std::collections::HashSet;

@@ -102,8 +102,9 @@ mod tests {
     use crate::notes::NotesState;
     use crate::notes::{NoteDraft, NoteKey};
     use crate::settings::{SettingsState, SettingsStore};
+    use crate::taxonomy::{TaxonomyState, TaxonomyStore};
     use crate::todos::{TodosState, TodosStore};
-    use crate::utils::palette::{ColorPalette, PaletteStore};
+    use crate::widgets::toast::{ToastState, ToastStore};
     use fragmenta_core::db::Db;
     use fragmenta_core::media::Images;
     use fragmenta_core::model::NoteFilter;
@@ -111,7 +112,7 @@ mod tests {
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{Context, IntoElement, Render, TestAppContext, WindowOptions, div};
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     struct PromptHost;
 
@@ -197,7 +198,9 @@ mod tests {
         cx.update(gpui_kit::init);
         let db = Arc::new(Db::open_in_memory().unwrap());
         let notes = cx.new(|_| NotesState::new(db.clone()));
-        let todos = cx.new(|_| TodosState::new(db));
+        let todos = cx.new(|_| TodosState::new(db.clone()));
+        let taxonomy = cx.new(|_| TaxonomyState::new(db));
+        let toast = cx.new(|_| ToastState::new());
         let settings = Settings {
             close_to_quit: true,
             ..Settings::default()
@@ -224,9 +227,10 @@ mod tests {
         cx.update(|cx| {
             cx.set_global(NotesStore(notes));
             cx.set_global(TodosStore(todos));
+            cx.set_global(TaxonomyStore(taxonomy));
             cx.set_global(SettingsStore(settings));
             cx.set_global(ImageStore(images));
-            cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
+            cx.set_global(ToastStore(toast));
             assert!(cx.windows().is_empty());
             request_quit(cx);
         });

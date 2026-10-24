@@ -1,12 +1,15 @@
-//! 分类与标签管理（架构 §5.2）。
+//! 分类与标签管理（架构 §5.2，ADR-0008）。
 //!
-//! 生命周期约定：分类为显式实体——建立后持续存在、支持重命名、删笔记不清理；
-//! 标签为值对象——挂载时按需建立、失去全部引用即从库中清理。
+//! 生命周期约定：分类与标签均为显式实体——建立后持续存在、支持重命名、
+//! 删笔记 / 摘挂载不清理，仅经管理页显式删除。颜色为用户选定的持久属性
+//! （`#RRGGBB` 或 NULL = 未选色）。
+
+use std::collections::HashMap;
 
 use rusqlite::{Connection, params};
 
 use super::{Db, DbError, Result};
-use crate::model::normalize_tags;
+use crate::model::{TaxonomyEntry, normalize_tags};
 
 impl Db {
     /// 全部分类名（按名称排序）。
@@ -15,10 +18,44 @@ impl Db {
         list_names(&conn, "SELECT name FROM categories ORDER BY name")
     }
 
-    /// 全部被引用的标签名（按名称排序；无引用标签随各写接口即时清理）。
+    /// 全部标签名（按名称排序；标签为显式实体，无引用亦留存）。
     pub fn tags(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         list_names(&conn, "SELECT name FROM tags ORDER BY name")
+    }
+
+    /// 全部分类条目（名称排序）：颜色 + 引用该分类的笔记数。
+    pub fn categories_with_usage(&self) -> Result<Vec<TaxonomyEntry>> {
+        let conn = self.conn.lock().unwrap();
+        list_entries(
+            &conn,
+            "SELECT c.id, c.name, c.color, COUNT(n.id)
+             FROM categories c LEFT JOIN notes n ON n.category_id = c.id
+             GROUP BY c.id ORDER BY c.name",
+        )
+    }
+
+    /// 全部标签条目（名称排序）：颜色 + 挂载该标签的笔记数。
+    pub fn tags_with_usage(&self) -> Result<Vec<TaxonomyEntry>> {
+        let conn = self.conn.lock().unwrap();
+        list_entries(
+            &conn,
+            "SELECT t.id, t.name, t.color, COUNT(nt.note_id)
+             FROM tags t LEFT JOIN note_tags nt ON nt.tag_id = t.id
+             GROUP BY t.id ORDER BY t.name",
+        )
+    }
+
+    /// 分类名 → 颜色映射（供卡片徽片与表单按名取色）。
+    pub fn category_colors(&self) -> Result<HashMap<String, Option<String>>> {
+        let conn = self.conn.lock().unwrap();
+        list_colors(&conn, "SELECT name, color FROM categories")
+    }
+
+    /// 标签名 → 颜色映射（供卡片徽片与表单按名取色）。
+    pub fn tag_colors(&self) -> Result<HashMap<String, Option<String>>> {
+        let conn = self.conn.lock().unwrap();
+        list_colors(&conn, "SELECT name, color FROM tags")
     }
 
     /// 设置笔记分类：`Some` 挂载（分类名不存在时自动建立），`None` 清除挂载。
@@ -73,8 +110,8 @@ impl Db {
         Ok(())
     }
 
-    /// 全量替换笔记标签：入参先经规范化（去首尾空白 / 丢弃空项 / 去重保序），
-    /// 替换后清理失去全部引用的标签；笔记不存在报错。
+    /// 全量替换笔记标签：入参先经规范化（去首尾空白 / 丢弃空项 / 去重保序）。
+    /// 标签为显式实体，失去引用的标签留存于库（ADR-0008）。
     pub fn set_note_tags(&self, note_id: i64, tags: &[String]) -> Result<()> {
         let normalized = normalize_tags(tags.iter().cloned());
         let mut conn = self.conn.lock().unwrap();
@@ -96,7 +133,6 @@ impl Db {
                 params![note_id, tag_id],
             )?;
         }
-        prune_orphan_tags(&tx)?;
         tx.commit()?;
         Ok(())
     }
@@ -116,15 +152,6 @@ fn ensure_note(conn: &Connection, note_id: i64) -> Result<()> {
     }
 }
 
-/// 清理失去全部引用的标签（标签生命周期：无引用即消失）。
-pub(super) fn prune_orphan_tags(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM note_tags)",
-        [],
-    )?;
-    Ok(())
-}
-
 /// 名称列表查询。
 fn list_names(conn: &Connection, sql: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(sql)?;
@@ -134,4 +161,36 @@ fn list_names(conn: &Connection, sql: &str) -> Result<Vec<String>> {
         names.push(name?);
     }
     Ok(names)
+}
+
+/// 条目查询：id / 名称 / 颜色 / 引用计数。
+fn list_entries(conn: &Connection, sql: &str) -> Result<Vec<TaxonomyEntry>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |row| {
+        Ok(TaxonomyEntry {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            color: row.get(2)?,
+            note_count: row.get(3)?,
+        })
+    })?;
+    let mut entries = Vec::new();
+    for entry in rows {
+        entries.push(entry?);
+    }
+    Ok(entries)
+}
+
+/// 名字 → 颜色映射查询。
+fn list_colors(conn: &Connection, sql: &str) -> Result<HashMap<String, Option<String>>> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (name, color) = row?;
+        map.insert(name, color);
+    }
+    Ok(map)
 }

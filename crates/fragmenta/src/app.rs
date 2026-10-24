@@ -9,7 +9,6 @@ pub(crate) mod quit;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use fragmenta_core::db::{Db, Result as DbResult};
 use fragmenta_core::media::Images;
@@ -22,10 +21,10 @@ use crate::notes::NotesState;
 use crate::notes::NotesStore;
 use crate::settings::SettingsState;
 use crate::settings::SettingsStore;
+use crate::taxonomy::TaxonomyState;
+use crate::taxonomy::TaxonomyStore;
 use crate::todos::TodosState;
 use crate::todos::TodosStore;
-use crate::utils::palette::ColorPalette;
-use crate::utils::palette::PaletteStore;
 use crate::widgets::toast::{ToastState, ToastStore};
 use crate::{tray, windows};
 
@@ -91,11 +90,12 @@ pub fn run() {
 /// 建立共享 store（数据库连接已由启动入口打开并注入）。
 fn init_stores(settings: &Settings, db: Arc<Db>, cx: &mut App) -> DbResult<()> {
     let notes = cx.new(|_| NotesState::new(db.clone()));
-    let todos = cx.new(|_| TodosState::new(db));
+    let todos = cx.new(|_| TodosState::new(db.clone()));
+    let taxonomy = cx.new(|_| TaxonomyState::new(db));
     cx.set_global(NotesStore(notes));
     cx.set_global(TodosStore(todos));
+    cx.set_global(TaxonomyStore(taxonomy));
     cx.set_global(ImageStore(Images::new(settings.data_dir.join("imgs"))));
-    cx.set_global(PaletteStore(Mutex::new(ColorPalette::new())));
     let toast = cx.new(|_| ToastState::new());
     cx.set_global(ToastStore(toast));
     Ok(())

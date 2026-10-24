@@ -44,14 +44,11 @@ impl Db {
         Ok(())
     }
 
-    /// 删除笔记；note_tags 经外键级联清理，失去全部引用的标签随之清理
-    /// （分类为显式实体，保留）。目标不存在时为无操作。
+    /// 删除笔记；note_tags 经外键级联清理。分类与标签均为显式实体，留存
+    /// （ADR-0008）。目标不存在时为无操作。
     pub fn delete_note(&self, id: i64) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        tx.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
-        super::taxonomy::prune_orphan_tags(&tx)?;
-        tx.commit()?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
         Ok(())
     }
 

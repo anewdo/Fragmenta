@@ -276,13 +276,17 @@ impl NotesPage {
                         .flex_wrap()
                         .gap_1()
                         .when_some(note.category.clone(), |el, cat| {
-                            el.child(CategoryTag::new(cat))
+                            let color = self.category_colors.get(&cat).copied().flatten();
+                            el.child(CategoryTag::new(cat).color(color))
                         })
                         .children(
                             note.tags
                                 .iter()
                                 .take(CARD_TAG_LIMIT)
-                                .map(|tag| TagBadge::new(tag.clone())),
+                                .map(|tag| {
+                                    TagBadge::new(tag.clone())
+                                        .color(self.tag_colors.get(tag).copied().flatten())
+                                }),
                         )
                         .when(extra_tags > 0, |el| {
                             el.child(

@@ -2,8 +2,10 @@
 //!
 //! 表单为逐条即时保存语义（无整体确定 / 取消）：回车经 `mod.rs` 的
 //! 会话订阅落库并清空输入框，点击已展示 Tag 移除对应数据，点击表单
-//! 外部收起并结束会话。颜色统一取自全局取色盘（与卡片徽片共用映射，
-//! 同屏同名同色）：分类为填充 Tag，标签为 outline Tag 带 `#` 前缀。
+//! 外部收起并结束会话。颜色取自页快照中的 DB 持久颜色（ADR-0008），
+//! 未选色为中性样式；chip 构造与卡片徽片共用（widgets::tag_badge）。
+
+use std::collections::HashMap;
 
 use fragmenta_core::model::Note;
 
@@ -13,13 +15,12 @@ use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::popover::{Popover, PopoverState};
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Sizable, Size, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
-use crate::utils::palette::PaletteStore;
-use crate::utils::palette::filled_foreground;
+use crate::widgets::tag_badge::{category_filled_chip, tag_outline_chip};
 
 /// 可点击 Tag：Tag 为纯展示组件，移除交互以可点击容器包裹
 /// （hover 亮暗提示 + 点击回调）。
@@ -72,6 +73,9 @@ impl NotesPage {
             let tag_input = form.tag_input.clone();
             let category = note.category.clone();
             let tags = note.tags.clone();
+            // 颜色快照随会话克隆：content 每帧调用，闭包内不可查询
+            let category_colors = self.category_colors.clone();
+            let tag_colors = self.tag_colors.clone();
             let weak_content = weak.clone();
             popover = popover.content(move |_, _, cx| {
                 taxonomy_form_content(
@@ -80,6 +84,8 @@ impl NotesPage {
                     &tag_input,
                     category.clone(),
                     &tags,
+                    &category_colors,
+                    &tag_colors,
                     &weak_content,
                     cx,
                 )
@@ -91,8 +97,8 @@ impl NotesPage {
 
 /// 表单内容：分类 / 标签两个输入区（label + 输入框 + 可点击 Tag 行）。
 ///
-/// 每帧随 Popover 重绘调用：仅做纯构建（输入实体与笔记数据均为快照），
-/// 取色经全局取色盘（名字 → 颜色映射进程内稳定）。
+/// 每帧随 Popover 重绘调用：仅做纯构建（输入实体、笔记数据与颜色映射
+/// 均为快照），取色走页快照中的 DB 持久颜色（未选色为中性样式）。
 #[allow(clippy::too_many_arguments)]
 fn taxonomy_form_content(
     note_id: i64,
@@ -100,23 +106,22 @@ fn taxonomy_form_content(
     tag_input: &Entity<InputState>,
     category: Option<String>,
     tags: &[String],
+    category_colors: &HashMap<String, Option<Hsla>>,
+    tag_colors: &HashMap<String, Option<Hsla>>,
     weak: &WeakEntity<NotesPage>,
     cx: &mut Context<PopoverState>,
 ) -> AnyElement {
     let muted = cx.theme().muted_foreground;
-    let mut palette = cx.global::<PaletteStore>().0.lock().expect("取色盘锁中毒");
+    let theme = cx.theme().clone();
 
-    // 分类：单值，填充色 Tag，点击清除
+    // 分类：单值，填充 chip，点击清除
     let category_row = match category {
         Some(category) => {
-            let color = palette.color_for(&category);
+            let color = category_colors.get(&category).copied().flatten();
             let weak_remove = weak.clone();
             removable_tag(
                 ("taxonomy-category-tag", note_id as u64),
-                Tag::custom(color, filled_foreground(), color)
-                    .with_size(Size::XSmall)
-                    .rounded_full()
-                    .child(category),
+                category_filled_chip(category.clone(), color, &theme),
                 move |_, _, cx| {
                     let _ = weak_remove
                         .update(cx, |this, cx| this.remove_taxonomy_category(note_id, cx));
@@ -131,7 +136,7 @@ fn taxonomy_form_content(
             .into_any_element(),
     };
 
-    // 标签：多值，outline Tag 带 # 前缀，点击移除该标签
+    // 标签：多值，outline chip 带 # 前缀，点击移除该标签
     let tag_row = if tags.is_empty() {
         div()
             .text_size(px(11.))
@@ -144,15 +149,11 @@ fn taxonomy_form_content(
             .gap_1()
             .children(tags.iter().enumerate().map(|(ix, tag)| {
                 let tag = tag.clone();
-                let color = palette.color_for(&tag);
+                let color = tag_colors.get(&tag).copied().flatten();
                 let weak_remove = weak.clone();
                 removable_tag(
                     ("taxonomy-tag", ix),
-                    Tag::custom(color, color, color)
-                        .outline()
-                        .with_size(Size::XSmall)
-                        .rounded_full()
-                        .child(format!("#{tag}")),
+                    tag_outline_chip(tag.clone(), color, &theme),
                     move |_, _, cx| {
                         let _ = weak_remove
                             .update(cx, |this, cx| this.remove_taxonomy_tag(note_id, &tag, cx));

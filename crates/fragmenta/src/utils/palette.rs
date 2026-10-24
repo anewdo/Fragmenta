@@ -1,43 +1,23 @@
-//! 取色盘（note-taxonomy-form spec）：洗牌袋 + 名字 → 颜色映射。
+//! 内置色板（ADR-0008）：6 色 Material Design 500 档，作为分类 / 标签
+//! 管理页选色 Popover 的内置色来源；另有 `#RRGGBB` 颜色解析，供读回
+//! DB 中用户选定的持久颜色。
 //!
 //! 应用层纯逻辑模块（仅用颜色数据类型，零 UI 组件依赖）：
-//! - 6 色 Material Design 取色盘（六个不同 hue 家族、同一 500 亮度档）；
-//! - 洗牌袋分配：每个首次出现的名字从袋中不放回取一色，袋空后重洗重置；
-//! - 名字 → 颜色映射进程内稳定（同屏一致），不持久化（重启后重新随机分配）；
-//! - 分类与标签共用一个键空间（键 = 名字字符串，同名同色）。
-//!
-//! 随机源：标准库随机种子 hasher（`RandomState`）对 `(seed, counter)` 哈希
-//! 驱动 Fisher-Yates。`RandomState` 的密钥在进程启动时随机生成、进程内固定，
-//! 因此同进程内洗牌稳定、跨进程随机；无密码学强度需求，不引入新依赖。
+//! - 分类与标签的展示颜色由用户选定、持久存于 DB（`color` 列）；
+//! - 未选色的条目以主题中性样式渲染；
+//! - 任意取色器（ticket 03）产出的颜色同样以 `#RRGGBB` 落库。
 
-use std::collections::HashMap;
-use std::collections::hash_map::RandomState;
-use std::hash::BuildHasher;
-use std::sync::Mutex;
-
-use gpui_kit::{Global, Hsla, hsla, rgb};
-
-/// 名字取色器（note-taxonomy-form）：卡片徽片与分类标签表单共用同一映射，
-/// 保证同屏同名同色；进程内稳定，不持久化。
-pub(crate) struct PaletteStore(pub(crate) Mutex<ColorPalette>);
-
-impl Global for PaletteStore {}
-
-/// 初始洗牌种子串：`RandomState` 每进程随机，固定串的哈希结果仍随进程而变。
-const INIT_SEED: &str = "fragmenta-palette-init";
-
-/// 纯空白名字的中性回退色（中灰）：不参与洗牌袋分配，也不落映射。
-fn neutral() -> Hsla {
-    hsla(0., 0., 0.5, 1.)
-}
+use gpui_kit::{Hsla, rgb};
 
 /// 色盘色的填充 Tag 前景（白）：色盘统一 500 亮度档，白字深 / 浅主题下均可读。
 pub(crate) fn filled_foreground() -> Hsla {
-    hsla(0., 0., 1., 1.)
+    gpui_kit::hsla(0., 0., 1., 1.)
 }
 
 /// 6 色 Material Design 取色盘：六个不同 hue 家族、同一 500 亮度档。
-fn palette_colors() -> [Hsla; 6] {
+/// 分类 / 标签选色 Popover 的内置色来源（taxonomy-pages 后续 ticket 接入）。
+#[allow(dead_code)]
+pub(crate) fn palette_colors() -> [Hsla; 6] {
     [
         rgb(0xF44336).into(), // Red 500
         rgb(0xFF9800).into(), // Orange 500
@@ -48,62 +28,33 @@ fn palette_colors() -> [Hsla; 6] {
     ]
 }
 
-/// 名字取色器：洗牌袋分配 + 进程内稳定映射。
-pub struct ColorPalette {
-    /// 袋中剩余颜色（已洗牌；取空即重洗重置）。
-    bag: Vec<Hsla>,
-    /// 名字 → 颜色（进程生命周期内稳定）。
-    map: HashMap<String, Hsla>,
-    /// 洗牌随机源（进程内固定，跨进程随机）。
-    hasher: RandomState,
+/// `#RRGGBB`（可省略 `#`）→ Hsla；格式非法返回 `None`（按未选色渲染）。
+pub fn parse_hex_color(s: &str) -> Option<Hsla> {
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    let value = u32::from_str_radix(hex, 16).ok()?;
+    Some(rgb(value).into())
 }
 
-impl Default for ColorPalette {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl ColorPalette {
-    /// 创建取色器：初始袋装满 6 色并洗牌。
-    pub fn new() -> Self {
-        let mut bag = palette_colors().to_vec();
-        let hasher = RandomState::new();
-        shuffle(&mut bag, INIT_SEED, &hasher);
-        Self {
-            bag,
-            map: HashMap::new(),
-            hasher,
-        }
+    #[test]
+    fn parses_rrggbb_with_and_without_hash() {
+        let with_hash = parse_hex_color("#2196F3").unwrap();
+        let bare = parse_hex_color("2196F3").unwrap();
+        assert_eq!(with_hash, bare);
     }
 
-    /// 按名字取色：首次出现的名字从袋中不放回取一色并缓存；
-    /// 袋空后重洗重置（一轮之内 6 色互不重复，用光后重来一轮）。
-    ///
-    /// 纯空白名字返回中性回退色，不参与分配。
-    pub fn color_for(&mut self, name: &str) -> Hsla {
-        let key = name.trim();
-        if key.is_empty() {
-            return neutral();
-        }
-        if let Some(color) = self.map.get(key) {
-            return *color;
-        }
-        if self.bag.is_empty() {
-            self.bag = palette_colors().to_vec();
-            shuffle(&mut self.bag, key, &self.hasher);
-        }
-        let color = self.bag.pop().expect("袋空重置后必有余色");
-        self.map.insert(key.to_string(), color);
-        color
-    }
-}
-
-/// Fisher-Yates 洗牌：每个随机数为 `hasher` 对 `(seed, counter)` 的哈希。
-fn shuffle(bag: &mut [Hsla], seed: &str, hasher: &RandomState) {
-    for (counter, i) in (0_u64..).zip((1..bag.len()).rev()) {
-        let mixed = hasher.hash_one((seed, counter));
-        let j = (mixed % (i as u64 + 1)) as usize;
-        bag.swap(i, j);
+    #[test]
+    fn rejects_malformed_input() {
+        assert_eq!(parse_hex_color(""), None);
+        assert_eq!(parse_hex_color("#12345"), None);
+        assert_eq!(parse_hex_color("#1234567"), None);
+        assert_eq!(parse_hex_color("#GGGGGG"), None);
+        assert_eq!(parse_hex_color("#2196F3 "), None);
     }
 }

@@ -10,11 +10,13 @@ pub const SCHEMA_VERSION: i64 = 1;
 const V1: &str = "
 CREATE TABLE categories (
   id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  color TEXT                                    -- #RRGGBB；NULL = 未选色
 );
 CREATE TABLE tags (
   id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
+  name TEXT NOT NULL UNIQUE,
+  color TEXT                                    -- #RRGGBB；NULL = 未选色
 );
 CREATE TABLE notes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,3 +63,15 @@ pub(super) fn run(conn: &mut Connection) -> Result<()> {
     tx.commit()?;
     Ok(())
 }
+
+// 表是否已有指定列（`PRAGMA table_info` 第二列为列名）。
+// fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+//     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+//     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+//     for name in rows {
+//         if name? == column {
+//             return Ok(true);
+//         }
+//     }
+//     Ok(false)
+// }

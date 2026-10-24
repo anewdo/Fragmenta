@@ -180,9 +180,20 @@ impl NotesState {
         self.db.categories()
     }
 
-    /// read-through：全部被引用的标签名（按名称排序）。
+    /// read-through：全部标签名（按名称排序；标签为显式实体，无引用亦留存）。
     pub fn tags(&self) -> DbResult<Vec<String>> {
         self.db.tags()
+    }
+
+    /// read-through：分类名 → 颜色（`#RRGGBB`，未选色为 None），
+    /// 供卡片徽片与分类标签表单按名取色。
+    pub fn category_colors(&self) -> DbResult<HashMap<String, Option<String>>> {
+        self.db.category_colors()
+    }
+
+    /// read-through：标签名 → 颜色（`#RRGGBB`，未选色为 None）。
+    pub fn tag_colors(&self) -> DbResult<HashMap<String, Option<String>>> {
+        self.db.tag_colors()
     }
 
     /// 重命名分类；成功后广播 `Changed`（列表与筛选选项跟随刷新）。

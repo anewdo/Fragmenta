@@ -32,6 +32,7 @@ pub mod widths {
     use super::{Pixels, px};
 
     pub const SETTINGS_CONTENT: Pixels = px(640.);
+    pub const TAXONOMY_CONTENT: Pixels = px(560.);
     pub const DIALOG: Pixels = px(380.);
     pub const TOAST_MAX: Pixels = px(360.);
     pub const CALENDAR: Pixels = px(272.);

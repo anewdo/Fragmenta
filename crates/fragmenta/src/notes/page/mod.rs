@@ -18,11 +18,21 @@ use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use std::collections::HashMap;
+
 use crate::notes::NotesStore;
 use crate::notes::editor::{EditorMode, NoteEditor};
 use crate::notes::{NoteKey, NotesEvent, NotesState};
 use crate::settings::SettingsEvent;
 use crate::settings::SettingsStore;
+use crate::utils::palette::parse_hex_color;
+
+/// 名字 → `#RRGGBB` 映射转为名字 → Hsla 展示色映射（非法色值按未选色处理）。
+fn parse_color_map(map: HashMap<String, Option<String>>) -> HashMap<String, Option<Hsla>> {
+    map.into_iter()
+        .map(|(name, color)| (name, color.as_deref().and_then(parse_hex_color)))
+        .collect()
+}
 
 /// 笔记页视图：筛选栏 + 卡片列表，常驻于主窗口 shell。
 pub(crate) struct NotesPage {
@@ -40,6 +50,10 @@ pub(crate) struct NotesPage {
     /// 筛选选项快照（分类 / 标签下拉的数据源）。
     categories: Vec<String>,
     tags: Vec<String>,
+    /// 名字 → 展示颜色快照（DB 持久颜色，未选色为 None）：卡片徽片与
+    /// 分类标签表单按名取色（ADR-0008）。
+    category_colors: HashMap<String, Option<Hsla>>,
+    tag_colors: HashMap<String, Option<Hsla>>,
     /// 当前打开的分类与标签编辑表单会话（同一时刻至多一个）。
     taxonomy_form: Option<TaxonomyForm>,
     /// 右栏编辑器（Phase 10）。
@@ -99,6 +113,8 @@ impl NotesPage {
             list: Ok(Vec::new()),
             categories: Vec::new(),
             tags: Vec::new(),
+            category_colors: HashMap::new(),
+            tag_colors: HashMap::new(),
             taxonomy_form: None,
             editor: cx.new(|cx| NoteEditor::new(window, cx)),
             selected: None,
@@ -125,6 +141,8 @@ impl NotesPage {
         // 选项查询失败按空处理：列表错误已单独占位呈现
         self.categories = store.categories().unwrap_or_default();
         self.tags = store.tags().unwrap_or_default();
+        self.category_colors = parse_color_map(store.category_colors().unwrap_or_default());
+        self.tag_colors = parse_color_map(store.tag_colors().unwrap_or_default());
         // 表单所属笔记已不在列表（如打开期间被删除）时结束会话，
         // 释放输入实体与回车订阅；卡片随列表消失，Popover 无处挂载。
         if let Some(form) = self.taxonomy_form.as_ref() {
