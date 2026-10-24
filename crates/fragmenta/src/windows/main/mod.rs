@@ -1,17 +1,24 @@
 //! 主窗口 shell
-use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
+use gpui_kit::base::StyledExt as _;
+use gpui_kit::component::animation::{EffectTransition, ease_in_out_cubic};
 use gpui_kit::component::{ActiveTheme as _, Icon, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::time::Duration;
+
+use fragmenta_core::settings::FontScale;
 
 use crate::notes::NotesPage;
 use crate::settings::SettingsPage;
 use crate::todos::TodosPage;
+use crate::ui::layout::LayoutClass;
+use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{ToastState, ToastStore};
+
+/// 侧栏展开 / 收起宽度动画时长
+const SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(200);
 
 /// 主窗口单例登记：窗口 handle 存于 App 全局，重复 `open` 激活既有窗口（D7）。
 struct MainWindow {
@@ -62,10 +69,17 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
         }
     }
 
-    let bounds = Bounds::centered(None, size(px(1080.), px(720.)), cx);
+    let bounds = Bounds::centered(
+        None,
+        size(tokens::widths::MAIN_WINDOW, tokens::heights::MAIN_WINDOW),
+        cx,
+    );
     let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_min_size: Some(size(px(760.), px(520.))),
+        window_min_size: Some(size(
+            tokens::widths::MAIN_WINDOW_MIN,
+            tokens::heights::MAIN_WINDOW_MIN,
+        )),
         ..TitleBar::window_options()
     };
     // TitleBar 自绘不展示标题文字；任务栏 / Alt-Tab 仍显示应用名
@@ -111,6 +125,10 @@ struct MainShell {
     sidebar_resizing: bool,
     /// 侧栏展开宽度（180–420px 钳制）：自持于 shell，收起 / 展开不丢失。
     sidebar_width: Pixels,
+    /// 宽度动画起点：仅在收起状态切换时记录当前可见宽度。
+    sidebar_anim_from: Pixels,
+    /// 宽度动画标识：切换收起状态时递增，拖宽时不重启动画。
+    sidebar_anim_seq: u64,
     notes: Entity<NotesPage>,
     todos: Entity<TodosPage>,
     settings: Entity<SettingsPage>,
@@ -139,12 +157,24 @@ impl MainShell {
         });
         let toast = cx.global::<ToastStore>().0.clone();
         let toast_sub = cx.observe(&toast, |_, _, cx| cx.notify());
-        let sidebar_width = settings.read(cx).sidebar_width();
+        let sidebar_width = settings
+            .read(cx)
+            .sidebar_width()
+            .clamp(tokens::widths::SIDEBAR_MIN, tokens::widths::SIDEBAR_MAX);
+        // 紧凑档首次进入自动收起一次；此后窗口缩放不再改写用户状态。
+        let compact = LayoutClass::from_width(window.viewport_size().width) == LayoutClass::Compact;
         Self {
             page: Page::Notes,
-            sidebar_collapsed: false,
+            sidebar_collapsed: compact,
             sidebar_resizing: false,
             sidebar_width,
+            // 首次渲染不走动画：起点即当前可见宽度
+            sidebar_anim_from: if compact {
+                tokens::widths::SIDEBAR_COLLAPSED
+            } else {
+                sidebar_width
+            },
+            sidebar_anim_seq: 0,
             notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
@@ -154,62 +184,124 @@ impl MainShell {
         }
     }
 
-    /// 侧栏导航项：图标 + 标题（15px，高于默认小字）+ 激活态，点击切换路由。
+    /// 侧栏导航项：图标 + 标题（控件标签角色）+ 激活态，点击切换路由。
+    /// 收起时隐藏标题，图标在栏内居中。
     fn nav_item(
         &self,
         page: Page,
         label: &'static str,
         icon: IconName,
+        collapsed: bool,
         cx: &mut Context<Self>,
-    ) -> SidebarMenuItem {
-        SidebarMenuItem::new(label)
-            .icon(Icon::new(icon))
-            .active(self.page == page)
+    ) -> impl IntoElement + use<> {
+        let active = self.page == page;
+        let accent = cx.theme().sidebar_accent;
+        let accent_fg = cx.theme().sidebar_accent_foreground;
+        h_flex()
+            .id(("sidebar-nav", page as usize))
+            .w_full()
+            .h(tokens::heights::NAV_ITEM)
+            .px(tokens::spacing::MD)
+            .gap_x(tokens::spacing::SM)
+            .rounded(tokens::radius::SM)
+            .items_center()
+            .cursor_pointer()
+            .when(collapsed, |this| this.justify_center())
+            .when(active, |this| {
+                this.font_medium().bg(accent).text_color(accent_fg)
+            })
+            .when(!active, |this| {
+                this.hover(move |style| style.bg(accent.opacity(0.8)).text_color(accent_fg))
+            })
+            .child(Icon::new(icon).size_5())
+            .when(!collapsed, |this| {
+                this.child(
+                    div()
+                        .text_role(TextRole::ControlLabel, FontScale::Medium)
+                        .child(label),
+                )
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.page = page;
                 cx.notify();
             }))
-            .min_h(px(48.))
-            .items_center()
-            .justify_center()
-            .label_style(
-                StyleRefinement::default()
-                    .text_size(px(17.))
-                    .justify_center(),
-            )
     }
 }
 
 impl Render for MainShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
-        // 收起开关驻留侧栏头部、第一个菜单项上方靠右；默认尺寸 ghost 按钮
-        // （kit 自带 SidebarToggleButton 过小），点击收起 / 展开侧栏
+        // 收起开关驻留侧栏头部；展开时贴右，收起时居中
         let toggle_icon = if collapsed {
             IconName::PanelLeftOpen
         } else {
             IconName::PanelLeftClose
         };
-        let toggle = Button::new("sidebar-toggle")
-            .ghost()
-            .icon(Icon::new(toggle_icon).size_4())
+        let toggle = div()
+            .id("sidebar-toggle")
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(tokens::heights::CONTROL)
+            .rounded(tokens::radius::SM)
+            .cursor_pointer()
+            .hover(|this| this.bg(cx.theme().sidebar_accent.opacity(0.8)))
+            .child(Icon::new(toggle_icon).size_5())
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.sidebar_anim_from = if this.sidebar_collapsed {
+                    tokens::widths::SIDEBAR_COLLAPSED
+                } else {
+                    this.sidebar_width
+                };
                 this.sidebar_collapsed = !this.sidebar_collapsed;
+                this.sidebar_anim_seq = this.sidebar_anim_seq.wrapping_add(1);
                 cx.notify();
             }));
-        // 侧栏自持像素宽度：collapsed 翻转时 kit 在展开宽 ↔ 48px 间做
-        // 宽度动画；展开期间宽度即拖宽结果
-        let sidebar = Sidebar::new("main-sidebar")
-            .collapsible(true)
-            .collapsed(collapsed)
-            // header 行占满侧栏宽，开关贴右
-            .header(h_flex().w_full().justify_end().child(toggle))
-            .child(SidebarMenu::new().children([
-                self.nav_item(Page::Notes, "笔记", IconName::NotebookPen, cx),
-                self.nav_item(Page::Todos, "待办", IconName::SquareCheckBig, cx),
-                self.nav_item(Page::Settings, "设置", IconName::Settings, cx),
-            ]))
-            .w(self.sidebar_width);
+        // 自绘侧栏骨架：kit 侧栏的收起宽度写死 48px，这里由
+        // tokens::widths::SIDEBAR_COLLAPSED 决定。锚定左缘，宽度动画在
+        // 展开宽 ↔ 收起宽之间过渡；展开期间宽度即拖宽结果。
+        let sidebar = v_flex()
+            .id("main-sidebar")
+            .flex_shrink_0()
+            .h_full()
+            .overflow_hidden()
+            .bg(cx.theme().tokens.sidebar)
+            .text_color(cx.theme().sidebar_foreground)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .pt(tokens::spacing::MD)
+                    .px(tokens::spacing::MD)
+                    .when(!collapsed, |this| this.justify_end())
+                    .when(collapsed, |this| this.justify_center())
+                    .child(toggle),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .pt(tokens::spacing::MD)
+                    .px(tokens::spacing::MD)
+                    .gap_y(tokens::spacing::SM)
+                    .children([
+                        self.nav_item(Page::Notes, "笔记", IconName::NotebookPen, collapsed, cx),
+                        self.nav_item(Page::Todos, "待办", IconName::SquareCheckBig, collapsed, cx),
+                        self.nav_item(Page::Settings, "设置", IconName::Settings, collapsed, cx),
+                    ]),
+            );
+        let target_width = if collapsed {
+            tokens::widths::SIDEBAR_COLLAPSED
+        } else {
+            self.sidebar_width
+        };
+        let sidebar = EffectTransition::new(SIDEBAR_TRANSITION_DURATION)
+            .ease(ease_in_out_cubic)
+            .width(self.sidebar_anim_from, target_width)
+            .apply(sidebar, ("sidebar-width", self.sidebar_anim_seq))
+            .into_any_element();
 
         // 拖宽手柄：骑缝式命中带——absolute 横跨接缝两侧（各 4px），不占
         // 布局空间，菜单栏与内容区零间隙衔接；拖动期间宽度跟随指针 x
@@ -231,14 +323,14 @@ impl Render for MainShell {
                         cx.new(|_| SidebarResizeGhost)
                     }),
             )
-            .on_drag_move::<Rc<SidebarResizeDrag>>(cx.listener(
-                |this, ev: &DragMoveEvent<Rc<SidebarResizeDrag>>, _, cx| {
+            .on_drag_move::<SidebarResizeDrag>(cx.listener(
+                |this, ev: &DragMoveEvent<SidebarResizeDrag>, _, cx| {
                     this.sidebar_resizing = true;
                     let x = ev.event.position.x;
-                    let width = if x < px(180.) {
-                        px(180.)
-                    } else if x > px(420.) {
-                        px(420.)
+                    let width = if x < tokens::widths::SIDEBAR_MIN {
+                        tokens::widths::SIDEBAR_MIN
+                    } else if x > tokens::widths::SIDEBAR_MAX {
+                        tokens::widths::SIDEBAR_MAX
                     } else {
                         x
                     };
@@ -299,11 +391,11 @@ impl Render for MainShell {
                 TitleBar::new().child(
                     h_flex()
                         .items_center()
-                        .gap_2()
+                        .gap(tokens::spacing::SM)
                         .child(Icon::new(IconName::Layers))
                         .child(
                             div()
-                                .font_weight(FontWeight::MEDIUM)
+                                .text_role(TextRole::ControlLabel, FontScale::Medium)
                                 .child("Fragmenta"),
                         ),
                 ),

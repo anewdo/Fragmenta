@@ -4,9 +4,7 @@ use fragmenta_core::export::{ExportFailure, ExportReport};
 use fragmenta_core::model::NoteFilter;
 use fragmenta_core::settings::{FontScale, ThemeMode};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::radio::RadioGroup;
-use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -17,11 +15,22 @@ use crate::hotkey::HotkeyError;
 use crate::notes::NotesStore;
 use crate::settings::SettingsStore;
 use crate::settings::theme_schemes;
+use crate::ui::layout::{
+    CardStyle, LayoutClass, content_column, page_scroll, section_title, setting_card,
+};
+use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{Toast, ToastStore};
+
+/// 热键录入框宽度与主题色卡尺寸：设置页局部控件特例。
+const HOTKEY_RECORDER_WIDTH: Pixels = px(240.);
+const THEME_SWATCH_WIDTH: Pixels = px(88.);
+const THEME_SWATCH_HEIGHT: Pixels = px(52.);
 
 /// 设置页视图：常驻于主窗口 shell，订阅设置广播刷新展示。
 pub(crate) struct SettingsPage {
     _subscription: Subscription,
+    /// 窗口尺寸变化：档位留白随视口宽度切换。
+    _bounds_sub: Subscription,
     /// 热键录入框焦点：监听态接收按键的载体。
     hotkey_focus: FocusHandle,
     /// 热键录入框是否处于监听态（点击进入，捕获完成 / 取消退出）。
@@ -37,14 +46,16 @@ pub(crate) struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = cx.global::<SettingsStore>().0.clone();
         let subscription = cx.subscribe(&settings, |_, _, _, cx| {
             // 设置变更（含本页操作）→ 刷新展示
             cx.notify();
         });
+        let bounds_sub = cx.observe_window_bounds(window, |_, _, cx| cx.notify());
         Self {
             _subscription: subscription,
+            _bounds_sub: bounds_sub,
             hotkey_focus: cx.focus_handle(),
             hotkey_listening: false,
             hotkey_pending_mods: None,
@@ -62,6 +73,7 @@ impl SettingsPage {
             .read(cx)
             .tile_hotkey()
             .to_string();
+        let card = CardStyle::from_theme(cx.theme());
         let (muted, primary, border, danger) = {
             let colors = cx.theme();
             (
@@ -83,18 +95,23 @@ impl SettingsPage {
             .flex()
             .items_center()
             .justify_center()
-            .w(px(240.))
-            .h(px(32.))
-            .rounded(px(6.))
+            .w(HOTKEY_RECORDER_WIDTH)
+            .h(tokens::heights::CONTROL)
+            .rounded(tokens::radius::SM)
             .border_1()
             .border_color(if listening { primary } else { border })
             .child(match (listening, pending_mods.as_deref()) {
                 (true, Some(mods)) => div()
-                    .text_sm()
+                    .text_role(TextRole::ControlLabel, FontScale::Medium)
                     .text_color(muted)
                     .child(format!("{mods} + …")),
-                (true, None) => div().text_sm().text_color(muted).child("按下新组合键…"),
-                (false, _) => div().child(pretty_hotkey(&hotkey)),
+                (true, None) => div()
+                    .text_role(TextRole::ControlLabel, FontScale::Medium)
+                    .text_color(muted)
+                    .child("按下新组合键…"),
+                (false, _) => div()
+                    .text_role(TextRole::ControlLabel, FontScale::Medium)
+                    .child(pretty_hotkey(&hotkey)),
             })
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 // 点击框外退出监听态，不误改热键
@@ -173,25 +190,29 @@ impl SettingsPage {
 
         v_flex()
             .w_full()
-            .gap_2()
-            .child(setting_row(
-                "磁贴呼出热键",
-                "点击录入框后直接按下新组合键完成改绑；Esc 或点击框外取消",
-                muted,
-                recorder,
+            .gap(tokens::spacing::SM)
+            .child(setting_card(
+                card,
+                setting_row(
+                    "磁贴呼出热键",
+                    "点击录入框后直接按下新组合键完成改绑；Esc 或点击框外取消",
+                    muted,
+                    recorder,
+                ),
             ))
             .when_some(error, |el, err| {
                 el.child(
                     h_flex()
                         .w_full()
                         .justify_end()
-                        .child(div().text_sm().text_color(danger).child(err)),
+                        .child(error_text(err, danger)),
                 )
             })
     }
     /// "数据"组（ticket 06）：三行布局——当前目录（可打开）／更改存储路径
     /// （目录选择器选完即迁移）／重置为默认位置；迁移错误红字展示。
     fn data_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let card = CardStyle::from_theme(cx.theme());
         let (muted, danger) = {
             let colors = cx.theme();
             (colors.muted_foreground, colors.danger)
@@ -207,16 +228,17 @@ impl SettingsPage {
 
         v_flex()
             .w_full()
-            .gap_4()
+            .gap(tokens::spacing::SM)
             // 行 1：当前数据存储目录 + 打开
-            .child(
+            .child(setting_card(
+                card,
                 v_flex()
                     .w_full()
-                    .gap_1()
+                    .gap(tokens::spacing::XS)
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .gap(tokens::spacing::SM)
                             .child(div().flex_1().child("当前数据存储目录"))
                             .child(Button::new("data-dir-open").label("打开当前目录").on_click(
                                 |_, _, cx| {
@@ -230,101 +252,101 @@ impl SettingsPage {
                                 },
                             )),
                     )
-                    .child(div().text_sm().text_color(muted).child(current)),
-            )
+                    .child(
+                        div()
+                            .text_role(TextRole::Meta, FontScale::Medium)
+                            .text_color(muted)
+                            .child(current),
+                    ),
+            ))
             // 行 2：更改存储路径（目录选择器选完即迁移）
-            .child(
+            .child(setting_card(
+                card,
                 h_flex()
                     .w_full()
-                    .gap_2()
+                    .gap(tokens::spacing::SM)
                     .child(div().flex_1().child("更改存储路径"))
-                    .child(
-                        Button::new("data-dir-change").label("选择新位置").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                // 系统目录选择器（COM IFileOpenDialog）；取消则不迁移
-                                let owner = crate::win32::window_hwnd(window);
-                                let Some(picked) = crate::win32::pick_folder(owner) else {
-                                    return;
-                                };
-                                let store = cx.global::<SettingsStore>().0.clone();
-                                match store.update(cx, |state, cx| state.set_data_dir(picked, cx))
-                                {
-                                    Ok(()) => this.data_dir_error = None,
-                                    Err(err) => this.data_dir_error = Some(err.to_string()),
-                                }
-                                cx.notify();
-                            },
-                        )),
-                    ),
-            )
+                    .child(Button::new("data-dir-change").label("选择新位置").on_click(
+                        cx.listener(|this, _, window, cx| {
+                            // 系统目录选择器（COM IFileOpenDialog）；取消则不迁移
+                            let owner = crate::win32::window_hwnd(window);
+                            let Some(picked) = crate::win32::pick_folder(owner) else {
+                                return;
+                            };
+                            let store = cx.global::<SettingsStore>().0.clone();
+                            match store.update(cx, |state, cx| state.set_data_dir(picked, cx)) {
+                                Ok(()) => this.data_dir_error = None,
+                                Err(err) => this.data_dir_error = Some(err.to_string()),
+                            }
+                            cx.notify();
+                        }),
+                    )),
+            ))
             // 行 3：重置为默认位置（exe 旁 data/）
-            .child(
+            .child(setting_card(
+                card,
                 v_flex()
                     .w_full()
-                    .gap_1()
+                    .gap(tokens::spacing::XS)
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
+                            .gap(tokens::spacing::SM)
                             .child(div().flex_1().child("重置为默认位置"))
-                            .child(
-                                Button::new("data-dir-reset").label("重置").on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        // 默认位置与启动逻辑同源（{exe_dir}/data）
-                                        let target =
-                                            fragmenta_core::settings::Settings::default().data_dir;
-                                        let store = cx.global::<SettingsStore>().0.clone();
-                                        let already_default = store.read_with(cx, |state, _| {
-                                            state.data_dir() == target
-                                        });
-                                        if already_default {
-                                            return;
-                                        }
-                                        match store.update(cx, |state, cx| {
-                                            state.set_data_dir(target, cx)
-                                        }) {
-                                            Ok(()) => this.data_dir_error = None,
-                                            Err(err) => {
-                                                this.data_dir_error = Some(err.to_string())
-                                            }
-                                        }
-                                        cx.notify();
-                                    }),
-                                ),
-                            ),
+                            .child(Button::new("data-dir-reset").label("重置").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    // 默认位置与启动逻辑同源（{exe_dir}/data）
+                                    let target =
+                                        fragmenta_core::settings::Settings::default().data_dir;
+                                    let store = cx.global::<SettingsStore>().0.clone();
+                                    let already_default =
+                                        store.read_with(cx, |state, _| state.data_dir() == target);
+                                    if already_default {
+                                        return;
+                                    }
+                                    match store
+                                        .update(cx, |state, cx| state.set_data_dir(target, cx))
+                                    {
+                                        Ok(()) => this.data_dir_error = None,
+                                        Err(err) => this.data_dir_error = Some(err.to_string()),
+                                    }
+                                    cx.notify();
+                                }),
+                            )),
                     )
                     .child(
                         div()
-                            .text_sm()
+                            .text_role(TextRole::Meta, FontScale::Medium)
                             .text_color(muted)
                             .child("将数据存储位置重置为 exe 所在目录"),
                     ),
-            )
+            ))
             // 行 4：笔记导出为 md（ticket 07）——目录选择器选目录，后台导出，toast 报告
-            .child(
+            .child(setting_card(
+                card,
                 h_flex()
                     .w_full()
-                    .gap_2()
+                    .gap(tokens::spacing::SM)
                     .child(div().flex_1().child("笔记导出为 md"))
                     .child(
-                        Button::new("data-export-md").label("导出").on_click(cx.listener(
-                            |_, _, window, cx| {
+                        Button::new("data-export-md")
+                            .label("导出")
+                            .on_click(cx.listener(|_, _, window, cx| {
                                 // 系统目录选择器（COM IFileOpenDialog）；取消则不导出
                                 let owner = crate::win32::window_hwnd(window);
                                 let Some(out_dir) = crate::win32::pick_folder(owner) else {
                                     return;
                                 };
                                 run_export(out_dir, cx);
-                            },
-                        )),
+                            })),
                     ),
-            )
+            ))
             .when_some(error, |el, err| {
                 el.child(
                     h_flex()
                         .w_full()
                         .justify_end()
-                        .child(div().text_sm().text_color(danger).child(err)),
+                        .child(error_text(err, danger)),
                 )
             })
     }
@@ -334,6 +356,7 @@ impl SettingsPage {
     fn system_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = cx.global::<SettingsStore>().0.read(cx);
         let (close_to_quit, autostart) = (settings.close_to_quit(), settings.autostart());
+        let card = CardStyle::from_theme(cx.theme());
         let (muted, danger) = {
             let colors = cx.theme();
             (colors.muted_foreground, colors.danger)
@@ -342,39 +365,45 @@ impl SettingsPage {
 
         v_flex()
             .w_full()
-            .gap_4()
-            .child(setting_row(
-                "关闭主窗口时直接退出",
-                "默认关闭：关闭主窗口后驻留系统托盘，热键呼出磁贴不受影响",
-                muted,
-                Switch::new("close-to-quit")
-                    .checked(close_to_quit)
-                    .on_click(|checked: &bool, _window, cx| {
-                        let settings = cx.global::<SettingsStore>().0.clone();
-                        settings.update(cx, |state, cx| state.set_close_to_quit(*checked, cx));
-                    }),
+            .gap(tokens::spacing::SM)
+            .child(setting_card(
+                card,
+                setting_row(
+                    "关闭主窗口时直接退出",
+                    "默认关闭：关闭主窗口后驻留系统托盘，热键呼出磁贴不受影响",
+                    muted,
+                    Switch::new("close-to-quit")
+                        .checked(close_to_quit)
+                        .on_click(|checked: &bool, _window, cx| {
+                            let settings = cx.global::<SettingsStore>().0.clone();
+                            settings.update(cx, |state, cx| state.set_close_to_quit(*checked, cx));
+                        }),
+                ),
             ))
-            .child(setting_row(
-                "开机自启动",
-                "登录 Windows 后静默启动并驻留托盘，不打开主窗口",
-                muted,
-                Switch::new("autostart")
-                    .checked(autostart)
-                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                        let store = cx.global::<SettingsStore>().0.clone();
-                        match store.update(cx, |state, cx| state.set_autostart(*checked, cx)) {
-                            Ok(()) => this.autostart_error = None,
-                            Err(err) => this.autostart_error = Some(err.to_string()),
-                        }
-                        cx.notify();
-                    })),
+            .child(setting_card(
+                card,
+                setting_row(
+                    "开机自启动",
+                    "登录 Windows 后静默启动并驻留托盘，不打开主窗口",
+                    muted,
+                    Switch::new("autostart")
+                        .checked(autostart)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            let store = cx.global::<SettingsStore>().0.clone();
+                            match store.update(cx, |state, cx| state.set_autostart(*checked, cx)) {
+                                Ok(()) => this.autostart_error = None,
+                                Err(err) => this.autostart_error = Some(err.to_string()),
+                            }
+                            cx.notify();
+                        })),
+                ),
             ))
             .when_some(error, |el, err| {
                 el.child(
                     h_flex()
                         .w_full()
                         .justify_end()
-                        .child(div().text_sm().text_color(danger).child(err)),
+                        .child(error_text(err, danger)),
                 )
             })
     }
@@ -467,47 +496,55 @@ fn export_result_toast(result: fragmenta_core::export::Result<ExportReport>) -> 
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = cx.global::<SettingsStore>().0.read(cx);
         let (theme, font_scale) = (settings.theme(), settings.font_scale());
-        let (muted, primary, border) = {
+        let (muted, primary, border, foreground) = {
             let theme_colors = cx.theme();
             (
                 theme_colors.muted_foreground,
                 theme_colors.primary,
                 theme_colors.border,
+                theme_colors.foreground,
             )
         };
-        v_flex()
-            .size_full()
-            .items_center()
-            .overflow_y_scrollbar()
-            .p_6()
-            .child(
-                v_flex()
-                    .w_full()
-                    .max_w(px(560.))
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .text_color(cx.theme().foreground.opacity(0.4))
-                            .child("设置"),
-                    )
-                    .child(
-                        GroupBox::new()
-                            .title("外观")
-                            .child(appearance_group(theme, font_scale, muted, primary, border)),
-                    )
-                    .child(GroupBox::new().title("快捷键").child(self.hotkey_group(cx)))
-                    .child(GroupBox::new().title("数据").child(self.data_group(cx)))
-                    .child(
-                        GroupBox::new()
-                            .title("系统")
-                            .child(self.system_group(cx)),
-                    ),
-            )
+        let card = CardStyle::from_theme(cx.theme());
+        let content = content_column(tokens::widths::SETTINGS_CONTENT)
+            .gap(tokens::spacing::XXL)
+            .child(setting_section(
+                "外观",
+                foreground,
+                appearance_group(theme, font_scale, muted, primary, border, card),
+            ))
+            .child(setting_section("快捷键", foreground, self.hotkey_group(cx)))
+            .child(setting_section("数据", foreground, self.data_group(cx)))
+            .child(setting_section("系统", foreground, self.system_group(cx)));
+        page_scroll(
+            LayoutClass::from_width(window.viewport_size().width),
+            content,
+        )
     }
+}
+
+/// 设置分组：区块标题 + 下方子项卡片列表，组与组之间由外层更大间距分隔。
+fn setting_section(
+    title: &'static str,
+    foreground: Hsla,
+    items: impl IntoElement,
+) -> impl IntoElement {
+    v_flex()
+        .w_full()
+        .gap(tokens::spacing::MD)
+        .child(section_title(title, foreground))
+        .child(items)
+}
+
+/// 设置项错误提示：固定元信息字号 + 危险色，右对齐展示。
+fn error_text(message: impl IntoElement, danger: Hsla) -> impl IntoElement {
+    div()
+        .text_role(TextRole::Meta, FontScale::Medium)
+        .text_color(danger)
+        .child(message)
 }
 
 /// "外观"组：主题色卡单选与字号三档，切换即时生效于全部存活窗口。
@@ -517,12 +554,16 @@ fn appearance_group(
     muted: Hsla,
     primary: Hsla,
     border: Hsla,
+    card: CardStyle,
 ) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_4()
-        .child(theme_section(theme, muted, primary, border))
-        .child(font_scale_row(font_scale, muted))
+        .gap(tokens::spacing::SM)
+        .child(setting_card(
+            card,
+            theme_section(theme, muted, primary, border),
+        ))
+        .child(setting_card(card, font_scale_row(font_scale, muted)))
 }
 
 /// 主题色卡预览的三区域颜色：菜单 / 标题栏 / 内容。
@@ -578,18 +619,25 @@ fn scheme_mock(scheme: &theme_schemes::ThemeScheme) -> MockColors {
 fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> impl IntoElement {
     v_flex()
         .w_full()
-        .gap_2()
+        .gap(tokens::spacing::SM)
         .child(
-            v_flex().gap_1().child("主题").child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
-            ),
+            v_flex()
+                .gap(tokens::spacing::XS)
+                .child(
+                    div()
+                        .text_role(TextRole::ControlLabel, FontScale::Medium)
+                        .child("主题"),
+                )
+                .child(
+                    div()
+                        .text_role(TextRole::Meta, FontScale::Medium)
+                        .text_color(muted)
+                        .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
+                ),
         )
         .child(
             h_flex()
-                .gap_3()
+                .gap(tokens::spacing::MD)
                 .flex_wrap()
                 .child(theme_swatch(
                     "theme-pick-light",
@@ -672,7 +720,7 @@ fn theme_swatch(
     muted: Hsla,
 ) -> impl IntoElement {
     v_flex()
-        .gap_1()
+        .gap(tokens::spacing::XS)
         .child(
             div()
                 .id(id)
@@ -681,9 +729,9 @@ fn theme_swatch(
                     let settings = cx.global::<SettingsStore>().0.clone();
                     settings.update(cx, |state, cx| state.set_theme(mode, cx));
                 })
-                .w(px(88.))
-                .h(px(52.))
-                .rounded(px(6.))
+                .w(THEME_SWATCH_WIDTH)
+                .h(THEME_SWATCH_HEIGHT)
+                .rounded(tokens::radius::SM)
                 .overflow_hidden()
                 .border_2()
                 .border_color(if selected { primary } else { border })
@@ -693,9 +741,9 @@ fn theme_swatch(
                 .child(preview),
         )
         .child(
-            h_flex().w(px(88.)).justify_center().child(
+            h_flex().w(THEME_SWATCH_WIDTH).justify_center().child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Meta, FontScale::Medium)
                     .text_color(if selected { primary } else { muted })
                     .child(label),
             ),
@@ -738,12 +786,23 @@ fn setting_row(
         .w_full()
         .items_center()
         .justify_between()
-        .gap_4()
+        .gap(tokens::spacing::LG)
         .child(
             v_flex()
-                .gap_1()
-                .child(div().child(title))
-                .child(div().text_sm().text_color(muted).child(description)),
+                .flex_1()
+                .min_w_0()
+                .gap(tokens::spacing::XS)
+                .child(
+                    div()
+                        .text_role(TextRole::ControlLabel, FontScale::Medium)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_role(TextRole::Meta, FontScale::Medium)
+                        .text_color(muted)
+                        .child(description),
+                ),
         )
         .child(field)
 }

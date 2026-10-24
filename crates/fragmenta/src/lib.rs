@@ -12,6 +12,7 @@ pub mod tray;
 pub mod notes;
 pub mod settings;
 pub mod todos;
+pub mod ui;
 pub mod utils;
 pub mod widgets;
 pub mod win32;
