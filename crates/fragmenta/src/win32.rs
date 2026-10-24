@@ -87,6 +87,17 @@ pub fn window_hwnd(window: &mut Window) -> Option<isize> {
     }
 }
 
+/// 主窗口关闭后请求 Windows 回收当前进程暂驻工作集。
+pub fn trim_working_set() {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+
+        let process = GetCurrentProcess();
+        let _ = SetProcessWorkingSetSize(process, usize::MAX, usize::MAX);
+    }
+}
+
 /// 系统目录选择对话框（COM `IFileOpenDialog` + `FOS_PICKFOLDERS`，ticket 06）。
 /// 用户取消或失败返回 None（设置页保持原输入）。
 ///

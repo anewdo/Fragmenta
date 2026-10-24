@@ -1,16 +1,5 @@
-//! 主窗口 shell（架构 §5.8 / D7）：单例幂等 + `Page` 路由 + 三页常驻。
-//!
-//! 经 kit 门面 `gpui_kit::open_window` 开窗（自动包 `base::Root`，获得
-//! overlay hosting）；业务页面由笔记、待办、设置功能模块提供。
-//! 顶部为 kit `TitleBar`（client-side 标题栏）：承载应用名与窗口控制
-//! （拖拽 / 最小化 / 最大化 / 关闭），不放交互控件——标题栏整体是
-//! `WindowControlArea` 拖拽区，按钮点击会被拖拽吞掉；交互入口驻留
-//! 各自内容区（侧栏收起开关在侧栏头部，编辑器模式切换在笔记页顶）。
-//! Windows 关闭按钮经 `WindowControlArea` 走原生关闭路径，托盘驻留
-//! 语义由 `on_window_should_close` 保持。
-//! 侧栏自持像素宽度：收起 / 展开走 kit 原生宽度动画（48px ↔ 当前宽）；
-//! 展开态右缘分隔带为自定义拖宽手柄（gpui `on_drag` / `on_drag_move`，
-//! 180–420px 钳制），仅拖动期间跟随指针，不参与常规命中。
+//! 主窗口 shell
+use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -25,7 +14,10 @@ use crate::todos::TodosPage;
 use crate::widgets::toast::{ToastState, ToastStore};
 
 /// 主窗口单例登记：窗口 handle 存于 App 全局，重复 `open` 激活既有窗口（D7）。
-struct MainWindow(AnyWindowHandle);
+struct MainWindow {
+    handle: AnyWindowHandle,
+    _closed_sub: Subscription,
+}
 
 impl Global for MainWindow {}
 
@@ -58,7 +50,7 @@ pub fn open(cx: &mut App) {
 
 /// 打开或激活主窗口，并返回可承载退出提示的窗口。
 pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
-    if let Some(handle) = cx.try_global::<MainWindow>().map(|reg| reg.0) {
+    if let Some(handle) = cx.try_global::<MainWindow>().map(|reg| reg.handle) {
         // 窗口仍存活则激活；已关闭时登记表过期，走重开路径
         if cx.windows().contains(&handle)
             && let Some(typed) = handle.downcast::<gpui_kit::base::Root>()
@@ -84,7 +76,23 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
         cx.new(|cx| MainShell::new(window, cx))
     }) {
         Ok((handle, _)) => {
-            cx.set_global(MainWindow(handle));
+            let closed_sub = cx.on_window_closed(move |cx, closed_id| {
+                let is_current = cx
+                    .try_global::<MainWindow>()
+                    .is_some_and(|main| main.handle.window_id() == closed_id);
+                if is_current && closed_id == handle.window_id() {
+                    cx.remove_global::<MainWindow>();
+                    let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+                    settings.update(cx, |state, _| state.shrink_database_memory());
+                    cx.defer(|_| {
+                        crate::win32::trim_working_set();
+                    });
+                }
+            });
+            cx.set_global(MainWindow {
+                handle,
+                _closed_sub: closed_sub,
+            });
             Some(handle)
         }
         Err(err) => {
@@ -131,11 +139,12 @@ impl MainShell {
         });
         let toast = cx.global::<ToastStore>().0.clone();
         let toast_sub = cx.observe(&toast, |_, _, cx| cx.notify());
+        let sidebar_width = settings.read(cx).sidebar_width();
         Self {
             page: Page::Notes,
             sidebar_collapsed: false,
             sidebar_resizing: false,
-            sidebar_width: px(255.),
+            sidebar_width,
             notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
@@ -160,7 +169,14 @@ impl MainShell {
                 this.page = page;
                 cx.notify();
             }))
-            .label_style(StyleRefinement::default().text_size(px(15.)))
+            .min_h(px(48.))
+            .items_center()
+            .justify_center()
+            .label_style(
+                StyleRefinement::default()
+                    .text_size(px(17.))
+                    .justify_center(),
+            )
     }
 }
 
@@ -201,40 +217,22 @@ impl Render for MainShell {
         // 提示线为命中带的兄弟元素（content 相对坐标），2px 骑缝（盖住
         // 侧栏边框像素 + 1px），与视觉边缘严丝合缝：平时隐形，悬停浅蓝，
         // 拖拽中深蓝
-        let resizing = self.sidebar_resizing;
-        let line = if resizing {
-            div()
-                .absolute()
-                .top_0()
-                .left(px(-1.))
-                .w(px(2.))
-                .h_full()
-                .bg(rgb(0x0958d9))
-        } else {
-            div()
-                .absolute()
-                .top_0()
-                .left(px(-1.))
-                .w(px(2.))
-                .h_full()
-                .bg(Hsla::default())
-                .group_hover("sidebar-resize", |l| l.bg(rgb(0x91caff)))
-        };
         let handle = div()
-            .id("sidebar-resize")
-            .group("sidebar-resize")
+            .id("sidebar-resize-events")
             .absolute()
             .top_0()
-            .left(px(-4.))
-            .w(px(8.))
+            .left_0()
+            .w_0()
             .h_full()
-            .occlude()
-            .cursor_col_resize()
-            .on_drag(SidebarResizeDrag, |_, _, _, cx| {
-                cx.new(|_| SidebarResizeGhost)
-            })
-            .on_drag_move::<SidebarResizeDrag>(cx.listener(
-                |this, ev: &DragMoveEvent<SidebarResizeDrag>, _, cx| {
+            .child(
+                gpui_kit::base::resize_handle("sidebar-resize", Axis::Horizontal)
+                    .with_appearance(gpui_kit::component::resize_handle_appearance())
+                    .on_drag(SidebarResizeDrag, |_, _, _, cx| {
+                        cx.new(|_| SidebarResizeGhost)
+                    }),
+            )
+            .on_drag_move::<Rc<SidebarResizeDrag>>(cx.listener(
+                |this, ev: &DragMoveEvent<Rc<SidebarResizeDrag>>, _, cx| {
                     this.sidebar_resizing = true;
                     let x = ev.event.position.x;
                     let width = if x < px(180.) {
@@ -256,6 +254,9 @@ impl Render for MainShell {
                 cx.listener(|this, _: &MouseUpEvent, _, cx| {
                     if this.sidebar_resizing {
                         this.sidebar_resizing = false;
+                        let width = this.sidebar_width;
+                        let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+                        settings.update(cx, |state, _| state.set_sidebar_width(width));
                         cx.notify();
                     }
                 }),
@@ -265,6 +266,9 @@ impl Render for MainShell {
                 cx.listener(|this, _: &MouseUpEvent, _, cx| {
                     if this.sidebar_resizing {
                         this.sidebar_resizing = false;
+                        let width = this.sidebar_width;
+                        let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+                        settings.update(cx, |state, _| state.set_sidebar_width(width));
                         cx.notify();
                     }
                 }),
@@ -284,7 +288,7 @@ impl Render for MainShell {
             )
             // 骑缝手柄与提示线挂在内容列左缘（absolute，不占布局空间），
             // 仅展开态
-            .when(!collapsed, |this| this.child(handle).child(line));
+            .when(!collapsed, |this| this.child(handle));
 
         v_flex()
             .relative()

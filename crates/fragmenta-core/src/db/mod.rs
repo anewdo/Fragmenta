@@ -173,6 +173,12 @@ impl Db {
         std::mem::swap(&mut *guard, &mut *staged_guard);
     }
 
+    /// 释放 SQLite 可回收的页缓存，降低窗口关闭后的驻留内存。
+    pub fn shrink_memory(&self) -> Result<()> {
+        self.conn.lock().unwrap().execute_batch("PRAGMA shrink_memory")?;
+        Ok(())
+    }
+
     /// 连接级初始化：外键约束 + 版本迁移。
     fn init(conn: &mut Connection) -> Result<()> {
         conn.pragma_update(None, "foreign_keys", true)?;
