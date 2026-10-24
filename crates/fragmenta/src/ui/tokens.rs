@@ -43,6 +43,9 @@ pub mod widths {
     pub const SIDEBAR_MAX: Pixels = px(420.);
     pub const SIDEBAR_DEFAULT: Pixels = px(255.);
 
+    /// 标题栏最右侧窗口控制按钮（最小化 / 最大化 / 关闭）的宽度。
+    pub const WINDOW_CONTROL: Pixels = px(46.);
+
     pub const MAIN_WINDOW: Pixels = px(1080.);
     pub const MAIN_WINDOW_MIN: Pixels = px(760.);
 }
@@ -57,6 +60,8 @@ pub mod heights {
     pub const MAIN_WINDOW_MIN: Pixels = px(520.);
     pub const NAV_ITEM: Pixels = px(48.);
     pub const CONTROL: Pixels = px(32.);
+    /// 主窗口顶部通栏标题栏的高度。
+    pub const TITLE_BAR: Pixels = px(40.);
 }
 
 /// 布局档位阈值：Compact < 900，Regular 900–1399，Wide ≥ 1400。

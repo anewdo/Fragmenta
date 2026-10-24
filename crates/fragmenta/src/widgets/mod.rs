@@ -3,6 +3,8 @@
 pub mod resizable_split;
 pub mod tag_badge;
 pub mod toast;
+pub mod window_title_bar;
 
 pub use resizable_split::ResizableSplit;
 pub use tag_badge::{CategoryTag, TagBadge};
+pub use window_title_bar::window_title_bar;

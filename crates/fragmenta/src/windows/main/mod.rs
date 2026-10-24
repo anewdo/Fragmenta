@@ -16,6 +16,7 @@ use crate::todos::TodosPage;
 use crate::ui::layout::LayoutClass;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{ToastState, ToastStore};
+use crate::widgets::window_title_bar;
 
 /// 侧栏展开 / 收起宽度动画时长
 const SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(200);
@@ -116,7 +117,7 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
     }
 }
 
-/// 主窗口 shell：kit `TitleBar` + 侧栏导航（可拖宽 / 可收起，带动画）+
+/// 主窗口 shell：自绘标题栏 + 侧栏导航（可拖宽 / 可收起，带动画）+
 /// 三页常驻 Entity 路由。
 struct MainShell {
     page: Page,
@@ -229,7 +230,7 @@ impl MainShell {
 }
 
 impl Render for MainShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
         // 收起开关驻留侧栏头部；展开时贴右，收起时居中
         let toggle_icon = if collapsed {
@@ -387,19 +388,19 @@ impl Render for MainShell {
             .size_full()
             .bg(cx.theme().background)
             // 顶部通栏 client-side 标题栏：应用图标 + 应用名；最右 = 窗口控制
-            .child(
-                TitleBar::new().child(
-                    h_flex()
-                        .items_center()
-                        .gap(tokens::spacing::SM)
-                        .child(Icon::new(IconName::Layers))
-                        .child(
-                            div()
-                                .text_role(TextRole::ControlLabel, FontScale::Medium)
-                                .child("Fragmenta"),
-                        ),
-                ),
-            )
+            .child(window_title_bar::window_title_bar(
+                h_flex()
+                    .items_center()
+                    .gap(tokens::spacing::SM)
+                    .child(Icon::new(IconName::Layers))
+                    .child(
+                        div()
+                            .text_role(TextRole::ControlLabel, FontScale::Medium)
+                            .child("Fragmenta"),
+                    ),
+                window,
+                cx,
+            ))
             // 中段：侧栏（收起 / 展开带 kit 宽度动画）与内容区紧密衔接，
             // 分隔 / 拖宽由骑缝手柄承担
             .child(
