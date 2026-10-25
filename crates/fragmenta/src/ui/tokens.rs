@@ -4,7 +4,6 @@
 //! 页面代码只引用令牌，不新写零散字号 / 间距 / 内容宽度；确需局部特例时
 //! 在调用处以命名常量集中声明。
 
-use fragmenta_core::settings::FontScale;
 use gpui_kit::{FontWeight, Pixels, Rems, Styled, px, rems};
 
 /// 间距阶梯（4 的倍数）：页面留白、组内 / 组间间隔、卡片内边距。
@@ -64,6 +63,8 @@ pub mod heights {
     pub const CONTROL: Pixels = px(32.);
     /// 主窗口顶部通栏标题栏的高度。
     pub const TITLE_BAR: Pixels = px(40.);
+    /// 文档标题输入行最小高度：字号放大时行随内容增高，不裁切文字。
+    pub const TITLE_ROW: Pixels = px(36.);
 }
 
 /// 布局档位阈值：Compact < 900，Regular 900–1399，Wide ≥ 1400。
@@ -74,14 +75,21 @@ pub mod breakpoints {
     pub const WIDE_MIN: Pixels = px(1400.);
 }
 
-/// 文字角色：内容角色随正文字号档位缩放，界面角色固定。
+/// 内容字号默认值：界面角色与未显式传入内容字号的场景使用。
+pub mod font {
+    use super::{Pixels, px};
+
+    pub const DEFAULT_CONTENT: Pixels = px(16.);
+}
+
+/// 文字角色：内容角色以传入的内容字号为基准偏移，界面角色固定。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextRole {
-    /// 内容区文档标题（笔记标题、磁贴标题）：中档 18，小 / 大 16 / 20。
+    /// 内容区文档标题（笔记标题、磁贴标题）：内容字号 +2。
     DocumentTitle,
-    /// 内容正文（编辑器、磁贴正文）：中档 16，小 / 大 14 / 18。
+    /// 内容正文（编辑器、磁贴正文）：内容字号本身。
     Body,
-    /// 列表阅读文本（笔记卡片摘要等）：中档 14，小 / 大 12 / 16。
+    /// 列表阅读文本（笔记卡片摘要等）：内容字号 -2。
     Reading,
     /// 设置分组 / 页面区块标题：固定 18。
     SectionTitle,
@@ -92,29 +100,15 @@ pub enum TextRole {
 }
 
 impl TextRole {
-    /// 字号；只有内容角色读取 `scale`，界面角色恒定。
-    pub fn size(self, scale: FontScale) -> Pixels {
-        let base = match self {
-            Self::DocumentTitle => px(18.),
-            Self::Body => px(16.),
-            Self::Reading => px(14.),
-            Self::SectionTitle | Self::ControlLabel | Self::Meta => return self.fixed_size(),
-        };
-        match scale {
-            FontScale::Small => base - px(2.),
-            FontScale::Medium => base,
-            FontScale::Large => base + px(2.),
-        }
-    }
-
-    fn fixed_size(self) -> Pixels {
+    /// 字号；内容角色以 `content_px` 为基准，界面角色恒定。
+    pub fn size(self, content_px: Pixels) -> Pixels {
         match self {
+            Self::DocumentTitle => content_px + px(2.),
+            Self::Body => content_px,
+            Self::Reading => content_px - px(2.),
             Self::SectionTitle => px(18.),
             Self::ControlLabel => px(14.),
             Self::Meta => px(12.),
-            Self::DocumentTitle | Self::Body | Self::Reading => {
-                unreachable!("内容角色使用随档位缩放的字号")
-            }
         }
     }
 
@@ -138,8 +132,14 @@ impl TextRole {
 
 /// 给任意可样式元素套用文字角色的字号 / 字重 / 行高；颜色仍由调用方决定。
 pub trait TextRoleExt: Styled + Sized {
-    fn text_role(self, role: TextRole, scale: FontScale) -> Self {
-        self.text_size(role.size(scale))
+    /// 界面角色（固定字号）；内容角色请用 [`Self::text_role_sized`]。
+    fn text_role(self, role: TextRole) -> Self {
+        self.text_role_sized(role, font::DEFAULT_CONTENT)
+    }
+
+    /// 内容角色：字号以设置中的内容像素为基准。
+    fn text_role_sized(self, role: TextRole, content_px: Pixels) -> Self {
+        self.text_size(role.size(content_px))
             .font_weight(role.weight())
             .line_height(role.line_height())
     }

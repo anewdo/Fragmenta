@@ -1,8 +1,8 @@
-//! 待办页（Phase 11）：左侧日历选日 + 右侧选中日清单，有待办的日子日历角标圆点。
+//! 待办页
 //!
-//! 数据流遵循架构铁律：render 内不查询——清单为订阅（`CalendarEvent::Selected` /
+//! 数据流遵循：render 内不查询——清单为订阅（`CalendarEvent::Selected` /
 //! `TodosEvent::Changed`）时拉取的页字段快照；新建 / 编辑共用同一 Dialog 表单。
-//! 本文件承载状态与交互逻辑（订阅 / 快照 / 表单提交），视图构建见 `view.rs`。
+//! 本文件承载状态与交互逻辑，视图构建见 `view.rs`
 
 mod view;
 
@@ -68,7 +68,7 @@ pub(crate) struct TodosPage {
     _calendar_sub: Subscription,
     _calendar_observe: Subscription,
     _changed_sub: Subscription,
-    /// 正文字号档变化 → 清单条目随 content_font_px 重渲染。
+    /// 编辑器字号变化 → 清单条目随 editor_font_px 重渲染。
     _settings_sub: Subscription,
 }
 
@@ -107,7 +107,7 @@ impl TodosPage {
                 this.refresh_marked(cx);
             }
         });
-        // 订阅矩阵（§5.6）：正文字号变化 → 清单重渲染（content_font_px）
+        // 编辑器字号变化 → 清单重渲染（editor_font_px）
         let settings = cx.global::<SettingsStore>().0.clone();
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();

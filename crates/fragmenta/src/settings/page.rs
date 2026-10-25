@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use fragmenta_core::export::{ExportFailure, ExportReport};
 use fragmenta_core::model::NoteFilter;
-use fragmenta_core::settings::{FontScale, ThemeMode};
+use fragmenta_core::settings::{FONT_SIZE_MAX_PX, FONT_SIZE_MIN_PX, ThemeMode};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::radio::RadioGroup;
+use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -25,12 +25,25 @@ use crate::widgets::toast::{Toast, ToastStore};
 const HOTKEY_RECORDER_WIDTH: Pixels = px(240.);
 const THEME_SWATCH_WIDTH: Pixels = px(88.);
 const THEME_SWATCH_HEIGHT: Pixels = px(52.);
+/// 字号滑杆宽度：范围仅十余档，短轨让每档的拖动距离足够可感。
+const FONT_SLIDER_WIDTH: Pixels = px(220.);
+/// 字号滑杆下方的实时示例词：中文 / 英文各一。
+const EDITOR_FONT_SAMPLE: (&str, &str) = ("笔记", "Note");
+const TILE_FONT_SAMPLE: (&str, &str) = ("速记", "Memo");
 
 /// 设置页视图：常驻于主窗口 shell，订阅设置广播刷新展示。
 pub(crate) struct SettingsPage {
     _subscription: Subscription,
     /// 窗口尺寸变化：档位留白随视口宽度切换。
     _bounds_sub: Subscription,
+    /// 编辑器字号滑杆与拖动中的实时预览值。
+    editor_font_slider: Entity<SliderState>,
+    editor_font_preview: f32,
+    _editor_font_sub: Subscription,
+    /// 小窗字号滑杆与拖动中的实时预览值。
+    tile_font_slider: Entity<SliderState>,
+    tile_font_preview: f32,
+    _tile_font_sub: Subscription,
     /// 热键录入框焦点：监听态接收按键的载体。
     hotkey_focus: FocusHandle,
     /// 热键录入框是否处于监听态（点击进入，捕获完成 / 取消退出）。
@@ -53,9 +66,54 @@ impl SettingsPage {
             cx.notify();
         });
         let bounds_sub = cx.observe_window_bounds(window, |_, _, cx| cx.notify());
+        let (editor_px, tile_px) = {
+            let state = settings.read(cx);
+            (
+                state.editor_font_px().as_f32(),
+                state.tile_font_px().as_f32(),
+            )
+        };
+        let editor_font_slider = cx.new(|_| font_slider(editor_px));
+        let tile_font_slider = cx.new(|_| font_slider(tile_px));
+        // 拖动中只刷新本页示例；松开后落库并广播到编辑器 / 磁贴
+        let editor_font_sub = cx.subscribe(
+            &editor_font_slider,
+            |this, _, event: &SliderEvent, cx| match event {
+                SliderEvent::Change(value) => {
+                    this.editor_font_preview = value.end();
+                    cx.notify();
+                }
+                SliderEvent::Release(value) => {
+                    let store = cx.global::<SettingsStore>().0.clone();
+                    store.update(cx, |state, cx| {
+                        state.set_editor_font_px(px(value.end()), cx)
+                    });
+                }
+            },
+        );
+        let tile_font_sub =
+            cx.subscribe(
+                &tile_font_slider,
+                |this, _, event: &SliderEvent, cx| match event {
+                    SliderEvent::Change(value) => {
+                        this.tile_font_preview = value.end();
+                        cx.notify();
+                    }
+                    SliderEvent::Release(value) => {
+                        let store = cx.global::<SettingsStore>().0.clone();
+                        store.update(cx, |state, cx| state.set_tile_font_px(px(value.end()), cx));
+                    }
+                },
+            );
         Self {
             _subscription: subscription,
             _bounds_sub: bounds_sub,
+            editor_font_slider,
+            editor_font_preview: editor_px,
+            _editor_font_sub: editor_font_sub,
+            tile_font_slider,
+            tile_font_preview: tile_px,
+            _tile_font_sub: tile_font_sub,
             hotkey_focus: cx.focus_handle(),
             hotkey_listening: false,
             hotkey_pending_mods: None,
@@ -102,15 +160,15 @@ impl SettingsPage {
             .border_color(if listening { primary } else { border })
             .child(match (listening, pending_mods.as_deref()) {
                 (true, Some(mods)) => div()
-                    .text_role(TextRole::ControlLabel, FontScale::Medium)
+                    .text_role(TextRole::ControlLabel)
                     .text_color(muted)
                     .child(format!("{mods} + …")),
                 (true, None) => div()
-                    .text_role(TextRole::ControlLabel, FontScale::Medium)
+                    .text_role(TextRole::ControlLabel)
                     .text_color(muted)
                     .child("按下新组合键…"),
                 (false, _) => div()
-                    .text_role(TextRole::ControlLabel, FontScale::Medium)
+                    .text_role(TextRole::ControlLabel)
                     .child(pretty_hotkey(&hotkey)),
             })
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -254,7 +312,7 @@ impl SettingsPage {
                     )
                     .child(
                         div()
-                            .text_role(TextRole::Meta, FontScale::Medium)
+                            .text_role(TextRole::Meta)
                             .text_color(muted)
                             .child(current),
                     ),
@@ -316,7 +374,7 @@ impl SettingsPage {
                     )
                     .child(
                         div()
-                            .text_role(TextRole::Meta, FontScale::Medium)
+                            .text_role(TextRole::Meta)
                             .text_color(muted)
                             .child("将数据存储位置重置为 exe 所在目录"),
                     ),
@@ -497,8 +555,7 @@ fn export_result_toast(result: fragmenta_core::export::Result<ExportReport>) -> 
 
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = cx.global::<SettingsStore>().0.read(cx);
-        let (theme, font_scale) = (settings.theme(), settings.font_scale());
+        let theme = cx.global::<SettingsStore>().0.read(cx).theme();
         let (muted, primary, border, foreground) = {
             let theme_colors = cx.theme();
             (
@@ -514,7 +571,19 @@ impl Render for SettingsPage {
             .child(setting_section(
                 "外观",
                 foreground,
-                appearance_group(theme, font_scale, muted, primary, border, card, cx),
+                appearance_group(
+                    theme,
+                    self.editor_font_preview,
+                    self.tile_font_preview,
+                    &self.editor_font_slider,
+                    &self.tile_font_slider,
+                    muted,
+                    primary,
+                    border,
+                    foreground,
+                    card,
+                    cx,
+                ),
             ))
             .child(setting_section("快捷键", foreground, self.hotkey_group(cx)))
             .child(setting_section("数据", foreground, self.data_group(cx)))
@@ -542,18 +611,23 @@ fn setting_section(
 /// 设置项错误提示：固定元信息字号 + 危险色，右对齐展示。
 fn error_text(message: impl IntoElement, danger: Hsla) -> impl IntoElement {
     div()
-        .text_role(TextRole::Meta, FontScale::Medium)
+        .text_role(TextRole::Meta)
         .text_color(danger)
         .child(message)
 }
 
-/// "外观"组：主题色卡单选与字号三档，切换即时生效于全部存活窗口。
+/// "外观"组：主题色卡单选 + 编辑器字号 / 小窗字号两个像素滑杆。
+#[allow(clippy::too_many_arguments)]
 fn appearance_group(
     theme: ThemeMode,
-    font_scale: FontScale,
+    editor_font_preview: f32,
+    tile_font_preview: f32,
+    editor_slider: &Entity<SliderState>,
+    tile_slider: &Entity<SliderState>,
     muted: Hsla,
     primary: Hsla,
     border: Hsla,
+    foreground: Hsla,
     card: CardStyle,
     cx: &App,
 ) -> impl IntoElement {
@@ -564,7 +638,84 @@ fn appearance_group(
             card,
             theme_section(theme, muted, primary, border, cx),
         ))
-        .child(setting_card(card, font_scale_row(font_scale, muted)))
+        .child(font_size_card(
+            "编辑器字号调整",
+            "调整主窗口编辑器与列表的正文大小；拖动滑杆即时预览",
+            editor_font_preview,
+            EDITOR_FONT_SAMPLE,
+            editor_slider,
+            muted,
+            foreground,
+            card,
+        ))
+        .child(font_size_card(
+            "小窗字号",
+            "调整磁贴小窗标题与正文的大小；拖动滑杆即时预览",
+            tile_font_preview,
+            TILE_FONT_SAMPLE,
+            tile_slider,
+            muted,
+            foreground,
+            card,
+        ))
+}
+
+/// 字号设置卡：标题 + 当前像素值、滑杆、滑杆下方的中英文示例。
+#[allow(clippy::too_many_arguments)]
+fn font_size_card(
+    title: &'static str,
+    description: &'static str,
+    value: f32,
+    samples: (&'static str, &'static str),
+    slider: &Entity<SliderState>,
+    muted: Hsla,
+    foreground: Hsla,
+    card: CardStyle,
+) -> impl IntoElement {
+    setting_card(
+        card,
+        v_flex()
+            .w_full()
+            .gap(tokens::spacing::MD)
+            .child(setting_row(
+                title,
+                description,
+                muted,
+                div()
+                    .text_role(TextRole::ControlLabel)
+                    .text_color(muted)
+                    .child(format!("{value:.0} px")),
+            ))
+            .child(Slider::new(slider).w(FONT_SLIDER_WIDTH))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_baseline()
+                    .gap(tokens::spacing::XL)
+                    .child(
+                        div()
+                            .text_role(TextRole::Meta)
+                            .text_color(muted)
+                            .child("示例"),
+                    )
+                    .child(font_sample(samples.0, value, foreground))
+                    .child(font_sample(samples.1, value, foreground)),
+            ),
+    )
+}
+
+/// 实时字号示例词：按当前滑杆值渲染。
+fn font_sample(word: &'static str, size: f32, color: Hsla) -> impl IntoElement {
+    div().text_size(px(size)).text_color(color).child(word)
+}
+
+/// 字号滑杆：整数步进，范围由 core 设置常量统一约束。
+fn font_slider(value: f32) -> SliderState {
+    SliderState::new()
+        .min(FONT_SIZE_MIN_PX)
+        .max(FONT_SIZE_MAX_PX)
+        .step(1.)
+        .default_value(value.clamp(FONT_SIZE_MIN_PX, FONT_SIZE_MAX_PX))
 }
 
 /// 主题色卡预览的三区域颜色：菜单 / 标题栏 / 内容。
@@ -613,14 +764,10 @@ fn theme_section(
         .child(
             v_flex()
                 .gap(tokens::spacing::XS)
+                .child(div().text_role(TextRole::ControlLabel).child("主题"))
                 .child(
                     div()
-                        .text_role(TextRole::ControlLabel, FontScale::Medium)
-                        .child("主题"),
-                )
-                .child(
-                    div()
-                        .text_role(TextRole::Meta, FontScale::Medium)
+                        .text_role(TextRole::Meta)
                         .text_color(muted)
                         .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
                 ),
@@ -709,36 +856,11 @@ fn theme_swatch(
         .child(
             h_flex().w(THEME_SWATCH_WIDTH).justify_center().child(
                 div()
-                    .text_role(TextRole::Meta, FontScale::Medium)
+                    .text_role(TextRole::Meta)
                     .text_color(if selected { primary } else { muted })
                     .child(label),
             ),
         )
-}
-
-/// 字号行：三档单选。
-fn font_scale_row(font_scale: FontScale, muted: Hsla) -> impl IntoElement {
-    setting_row(
-        "正文字号",
-        "调整笔记、待办与磁贴的正文文字大小",
-        muted,
-        RadioGroup::horizontal("font-scale")
-            .selected_index(match font_scale {
-                FontScale::Small => Some(0),
-                FontScale::Medium => Some(1),
-                FontScale::Large => Some(2),
-            })
-            .on_change(|ix, _, cx| {
-                let scale = match *ix {
-                    0 => FontScale::Small,
-                    1 => FontScale::Medium,
-                    _ => FontScale::Large,
-                };
-                let settings = cx.global::<SettingsStore>().0.clone();
-                settings.update(cx, |state, cx| state.set_font_scale(scale, cx));
-            })
-            .children(["小", "中", "大"]),
-    )
 }
 
 /// 设置行布局：左侧标题 + 说明，右侧控件。
@@ -758,14 +880,10 @@ fn setting_row(
                 .flex_1()
                 .min_w_0()
                 .gap(tokens::spacing::XS)
+                .child(div().text_role(TextRole::ControlLabel).child(title))
                 .child(
                     div()
-                        .text_role(TextRole::ControlLabel, FontScale::Medium)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_role(TextRole::Meta, FontScale::Medium)
+                        .text_role(TextRole::Meta)
                         .text_color(muted)
                         .child(description),
                 ),

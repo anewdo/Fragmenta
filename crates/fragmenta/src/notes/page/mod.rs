@@ -68,7 +68,7 @@ pub(crate) struct NotesPage {
     _changed_sub: Subscription,
     /// 管理页建 / 改 / 删实体 → 列表与筛选选项重拉
     _taxonomy_sub: Subscription,
-    /// 正文字号档变化 → 列表标题与摘要随 content_font_px 重渲染。
+    /// 编辑器字号变化 → 列表标题与摘要随 editor_font_px 重渲染。
     _settings_sub: Subscription,
 }
 
@@ -106,7 +106,7 @@ impl NotesPage {
         let taxonomy_sub = cx.subscribe(&taxonomy, |this, _, _: &TaxonomyEvent, cx| {
             this.refresh(cx);
         });
-        // 正文字号变化 → 列表重渲染（content_font_px）
+        // 编辑器字号变化 → 列表重渲染（editor_font_px）
         let settings = cx.global::<SettingsStore>().0.clone();
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();

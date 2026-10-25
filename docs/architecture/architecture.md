@@ -160,7 +160,8 @@ impl Db {
 ```rust
 pub struct Settings {
     pub theme: ThemeMode,        // Light | Dark | Auto（ADR-0009）
-    pub font_scale: FontScale,   // Small | Medium | Large，映射 Theme.font_size
+    pub editor_font_px: f32,     // 编辑器与主窗口列表正文字号（默认 16，12..=24）
+    pub tile_font_px: f32,       // 磁贴小窗标题 / 正文字号（默认 16，12..=24）
     pub data_dir: PathBuf,       // 默认 {exe_dir}/data；内部平铺 fragmenta.db 与 imgs/
     pub tile_hotkey: String,     // 如 "ctrl+alt+n"；不允许清空
     pub autostart: bool,         // 开机自启动（注册表 Run，写入 --silent），默认 false
@@ -243,8 +244,10 @@ impl NotesState {
 impl SettingsState {
     pub fn set_theme(&mut self, mode: ThemeMode, window: &mut Window, cx: &mut Context<Self>);
     // 持久化 + Theme::global_mut + Theme::sync_base + App::refresh_windows()
-    pub fn set_font_scale(&mut self, scale: FontScale, window: &mut Window, cx: &mut Context<Self>);
-    // 持久化 + Theme.font_size + Theme::sync_base + App::refresh_windows()
+    pub fn set_editor_font_px(&mut self, size: Pixels, cx: &mut Context<Self>);
+    // 钳制到 12..=24 后持久化 + 广播；内容组件据此重渲染
+    pub fn set_tile_font_px(&mut self, size: Pixels, cx: &mut Context<Self>);
+    // 钳制到 12..=24 后持久化 + 广播；磁贴据此重渲染
     pub fn set_hotkey(&mut self, hotkey: &str, cx: &mut Context<Self>);
     // 持久化 + HotkeyController::rebind；注册失败则提示且不落库
     pub fn set_data_dir(&mut self, dir: PathBuf, cx: &mut Context<Self>);

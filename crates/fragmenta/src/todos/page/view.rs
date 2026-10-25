@@ -451,8 +451,8 @@ impl Render for TodosPage {
                 theme.primary_foreground,
             )
         };
-        // 内容阅读面：清单条目随正文字号档缩放（日历与辅助小字保持固定）
-        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        // 内容阅读面：清单条目随编辑器字号缩放（日历与辅助小字保持固定）
+        let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
 
         // 标题行：图标 + 标题 + 「今天」/「新建」
         let header = h_flex()

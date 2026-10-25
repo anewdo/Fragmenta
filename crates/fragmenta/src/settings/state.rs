@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fragmenta_core::db::Db;
-use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
+use fragmenta_core::settings::{self, Settings, ThemeMode};
 use global_hotkey::hotkey::HotKey;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode};
 use gpui_kit::{
@@ -76,19 +76,15 @@ impl SettingsState {
         self.settings.theme
     }
 
-    /// 当前字号档位。
-    pub fn font_scale(&self) -> FontScale {
-        self.settings.font_scale
+    /// 编辑器与主窗口列表（笔记列表 / 待办清单）的正文字号：
+    /// 内容组件在容器上 `.text_size()` 应用，文字沿元素树继承。
+    pub fn editor_font_px(&self) -> Pixels {
+        px(settings::clamp_font_px(self.settings.editor_font_px))
     }
 
-    /// 内容阅读面（笔记列表 / 编辑器与预览 / 待办清单 / 磁贴标题与正文）
-    /// 的正文字号：内容组件在容器上 `.text_size()` 应用，文字沿元素树继承。
-    pub fn content_font_px(&self) -> Pixels {
-        match self.settings.font_scale {
-            FontScale::Small => px(14.),
-            FontScale::Medium => px(16.),
-            FontScale::Large => px(18.),
-        }
+    /// 磁贴小窗标题 / 正文的字号。
+    pub fn tile_font_px(&self) -> Pixels {
+        px(settings::clamp_font_px(self.settings.tile_font_px))
     }
 
     /// 关闭主窗口时直接退出；默认 false（托盘驻留）。
@@ -181,12 +177,24 @@ impl SettingsState {
         cx.emit(SettingsEvent::Changed);
     }
 
-    /// 更新字号档位：持久化 + 广播（订阅的内容组件据此重渲染生效）。
-    pub fn set_font_scale(&mut self, scale: FontScale, cx: &mut Context<Self>) {
-        if self.settings.font_scale == scale {
+    /// 更新编辑器字号：钳制到可调范围，持久化 + 广播（内容组件据此重渲染）。
+    pub fn set_editor_font_px(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        let size = settings::clamp_font_px(size.as_f32());
+        if self.settings.editor_font_px == size {
             return;
         }
-        self.settings.font_scale = scale;
+        self.settings.editor_font_px = size;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新小窗字号：钳制到可调范围，持久化 + 广播。
+    pub fn set_tile_font_px(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        let size = settings::clamp_font_px(size.as_f32());
+        if self.settings.tile_font_px == size {
+            return;
+        }
+        self.settings.tile_font_px = size;
         self.persist();
         cx.emit(SettingsEvent::Changed);
     }

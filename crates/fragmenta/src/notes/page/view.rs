@@ -231,7 +231,7 @@ impl NotesPage {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::BOLD)
                             .truncate()
                             .child(title),
                     )
@@ -314,8 +314,8 @@ impl Render for NotesPage {
                 theme.danger,
             )
         };
-        // 内容阅读面：列表标题 / 摘要随正文字号档缩放（辅助小字保持固定）
-        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        // 内容阅读面：列表标题 / 摘要随编辑器字号缩放（辅助小字保持固定）
+        let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
         let notes_list_width = cx.global::<SettingsStore>().0.read(cx).notes_list_width();
         let split_state = self.split_state.clone();
 

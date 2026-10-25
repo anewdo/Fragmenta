@@ -13,6 +13,7 @@ use crate::notes::NotesStore;
 use crate::notes::{NoteDraft, NoteKey, NotesEvent, NotesState, SaveStatus};
 use crate::settings::SettingsEvent;
 use crate::settings::SettingsStore;
+use crate::ui::tokens;
 use crate::win32;
 
 use super::{CORNER, open_new};
@@ -51,7 +52,7 @@ pub(super) struct TileView {
     _word_sub: Subscription,
     _saved_sub: Subscription,
     _bounds_sub: Subscription,
-    /// 正文字号档变化 → 标题 / 正文随 content_font_px 重渲染。
+    /// 小窗字号变化 → 标题 / 正文随 tile_font_px 重渲染。
     _settings_sub: Subscription,
     _appearance_sub: Subscription,
 }
@@ -111,7 +112,7 @@ impl TileView {
         let settings = cx.global::<SettingsStore>().0.clone();
         let appearance_sub =
             settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
-        // 订阅矩阵（§5.6）：正文字号变化 → 标题 / 正文重渲染（content_font_px）
+        // 订阅矩阵（§5.6）：小窗字号变化 → 标题 / 正文重渲染（tile_font_px）
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();
         });
@@ -275,8 +276,8 @@ impl Render for TileView {
                 theme.title_bar,
             )
         };
-        // 内容阅读面：标题 / 正文随正文字号档缩放（辅助小字保持固定）
-        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        // 内容阅读面：标题 / 正文随小窗字号缩放（辅助小字保持固定）
+        let content_px = cx.global::<SettingsStore>().0.read(cx).tile_font_px();
 
         // 保存状态文案（兼拖拽区内容；区域内无交互元素，§9 条目 2）
         let status_label = match self.status {
@@ -375,20 +376,28 @@ impl Render for TileView {
             .child(
                 h_flex()
                     .flex_shrink_0()
-                    .h_9()
+                    .min_h(tokens::heights::TITLE_ROW)
                     .items_center()
                     .overflow_hidden()
-                    .text_size(content_px)
                     .border_b_1()
                     .border_color(border)
-                    .child(Input::new(&self.title).appearance(false).px(px(10.))),
+                    .child(
+                        Input::new(&self.title)
+                            .appearance(false)
+                            .px(px(10.))
+                            .font_weight(FontWeight::BOLD)
+                            .h_auto()
+                            .text_size(content_px),
+                    ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .text_size(content_px)
-                    .child(self.source.element().appearance(false).h_full()),
+                div().flex_1().min_h_0().child(
+                    self.source
+                        .element()
+                        .appearance(false)
+                        .h_full()
+                        .text_size(content_px),
+                ),
             )
             .child(
                 h_flex()

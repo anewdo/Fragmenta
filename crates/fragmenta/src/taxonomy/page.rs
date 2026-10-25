@@ -2,7 +2,6 @@
 //!
 
 use fragmenta_core::model::TaxonomyEntry;
-use fragmenta_core::settings::FontScale;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::WindowExt as _;
@@ -321,7 +320,7 @@ impl TaxonomyPage {
         };
         let count = div()
             .flex_shrink_0()
-            .text_role(TextRole::Meta, FontScale::Medium)
+            .text_role(TextRole::Meta)
             .text_color(theme.muted_foreground)
             .child(format!("{} 篇", entry.note_count));
         let mut row = h_flex()
@@ -356,7 +355,7 @@ impl TaxonomyPage {
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_role(TextRole::ControlLabel, FontScale::Medium)
+                        .text_role(TextRole::ControlLabel)
                         .child(entry.name.clone()),
                 )
                 .child(count)

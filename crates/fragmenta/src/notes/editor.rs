@@ -1,10 +1,10 @@
-//! Markdown 编辑器组装（架构 §5.9）：笔记页右栏，标题 + 正文 + 三模式。
+//! Markdown 编辑器组装：笔记页右栏，标题 + 正文 + 三模式。
 //!
 //! - 模式 `Source | Preview | Split`：Source = 源文本输入组件；
 //!   Preview = markdown + 图片路径插件；Split 双栏各自独立滚动（ADR-0003）
 //! - 编辑防抖保存与磁贴共用 `NotesState`；编辑器只以 `Note(id)` 为防抖
 //!   key（笔记必来自列表选中，无草稿晋升路径）
-//! - 订阅矩阵（§5.6）：不订阅 `Changed`（编辑器是当前笔记内容的事实
+//! - 不订阅 `Changed`（编辑器是当前笔记内容的事实
 //!   来源），只响应携带自己 key 的 `Saved` 更新保存状态
 //! - 载入 / 清空由笔记页驱动：页在选中前先 `flush_now` 目标 key 并重拉
 //!   快照，保证载入内容包含磁贴 / 本编辑器的最新待写内容；正打开的笔记
@@ -29,9 +29,10 @@ use crate::notes::NotesStore;
 use crate::notes::{NoteDraft, NoteKey, NotesEvent, NotesState, SaveStatus};
 use crate::settings::SettingsEvent;
 use crate::settings::SettingsStore;
+use crate::ui::tokens;
 use crate::widgets::ResizableSplit;
 
-/// 编辑器模式（架构 §5.9）。
+/// 编辑器模式
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum EditorMode {
     /// 源文本编辑。
@@ -69,7 +70,7 @@ pub(super) struct NoteEditor {
     _title_sub: Subscription,
     _word_sub: Subscription,
     _saved_sub: Subscription,
-    /// 正文字号档变化 → 源文 / 预览随 content_font_px 重渲染。
+    /// 编辑器字号变化 → 源文 / 预览随 editor_font_px 重渲染。
     _settings_sub: Subscription,
     split_state: Entity<ResizableState>,
 }
@@ -91,7 +92,7 @@ impl NoteEditor {
             this.word_count = count;
             this.dispatch_save(cx);
         });
-        // 订阅矩阵（§5.6）：只响应携带自己 key 的 Saved，不订阅 Changed
+        // 只响应携带自己 key 的 Saved，不订阅 Changed
         let saved_sub = cx.subscribe(&notes, |this, _, event: &NotesEvent, cx| {
             if let NotesEvent::Saved { key, status, .. } = event
                 && let NoteKey::Note(id) = key
@@ -105,7 +106,7 @@ impl NoteEditor {
             }
         });
 
-        // 订阅矩阵（§5.6）：正文字号变化 → 源文 / 预览重渲染（content_font_px）
+        // 编辑器字号变化 → 源文 / 预览重渲染（editor_font_px）
         let settings = cx.global::<SettingsStore>().0.clone();
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();
@@ -222,8 +223,8 @@ impl Render for NoteEditor {
                 theme.danger,
             )
         };
-        // 内容阅读面：源文 / 预览正文随正文字号档缩放
-        let content_px = cx.global::<SettingsStore>().0.read(cx).content_font_px();
+        // 内容阅读面：源文 / 预览正文随编辑器字号缩放
+        let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
         let editor_source_width = cx.global::<SettingsStore>().0.read(cx).editor_source_width();
         let split_state = self.split_state.clone();
 
@@ -262,7 +263,7 @@ impl Render for NoteEditor {
 
         let title_row = h_flex()
             .flex_shrink_0()
-            .h_9()
+            .min_h(tokens::heights::TITLE_ROW)
             .items_center()
             .overflow_hidden()
             .border_b_1()
@@ -271,7 +272,9 @@ impl Render for NoteEditor {
                 Input::new(&self.title)
                     .appearance(false)
                     .px(px(12.))
-                    .font_weight(FontWeight::MEDIUM),
+                    .font_weight(FontWeight::BOLD)
+                    .h_auto()
+                    .text_size(content_px),
             );
 
         // 正文区：三模式（Split 内分栏同样可拖动，两栏滚动独立）
@@ -280,6 +283,7 @@ impl Render for NoteEditor {
             .element()
             .appearance(false)
             .h_full()
+            .text_size(content_px)
             .into_any_element();
         let body = match self.mode {
             EditorMode::Source => div().size_full().child(source).into_any_element(),

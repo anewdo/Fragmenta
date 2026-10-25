@@ -8,8 +8,6 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::time::Duration;
 
-use fragmenta_core::settings::FontScale;
-
 use crate::notes::NotesPage;
 use crate::settings::SettingsPage;
 use crate::taxonomy::{TaxonomyKind, TaxonomyPage};
@@ -227,7 +225,7 @@ impl MainShell {
             .when(!collapsed, |this| {
                 this.child(
                     div()
-                        .text_role(TextRole::ControlLabel, FontScale::Medium)
+                        .text_role(TextRole::ControlLabel)
                         .child(label),
                 )
             })
@@ -406,7 +404,7 @@ impl Render for MainShell {
                     .child(Icon::new(IconName::Layers))
                     .child(
                         div()
-                            .text_role(TextRole::ControlLabel, FontScale::Medium)
+                            .text_role(TextRole::ControlLabel)
                             .child("Fragmenta"),
                     ),
                 window,

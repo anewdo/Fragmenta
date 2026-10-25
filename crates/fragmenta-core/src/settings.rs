@@ -11,21 +11,21 @@ pub enum ThemeMode {
     Auto,
 }
 
-/// 字号档位，映射 Theme.font_size。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum FontScale {
-    Small,
-    #[default]
-    Medium,
-    Large,
-}
+/// 内容正文字号的可调范围（逻辑像素）。
+pub const FONT_SIZE_MIN_PX: f32 = 12.;
+pub const FONT_SIZE_MAX_PX: f32 = 24.;
+/// 内容正文字号默认值（逻辑像素）。
+pub const FONT_SIZE_DEFAULT_PX: f32 = 16.;
 
 /// 应用设置，持久化为 exe 旁 settings.json。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub theme: ThemeMode,
-    pub font_scale: FontScale,
+    /// 编辑器与主窗口列表的正文字号（逻辑像素）。
+    pub editor_font_px: f32,
+    /// 磁贴小窗的标题 / 正文字号（逻辑像素）。
+    pub tile_font_px: f32,
     /// 数据目录（数据库与图片图库平铺于其内），默认 {exe_dir}/data，可迁移。
     pub data_dir: PathBuf,
     /// 磁贴呼出热键，如 "ctrl+alt+n"。
@@ -65,13 +65,23 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::default(),
-            font_scale: FontScale::default(),
+            editor_font_px: FONT_SIZE_DEFAULT_PX,
+            tile_font_px: FONT_SIZE_DEFAULT_PX,
             data_dir: default_data_dir(),
             tile_hotkey: default_tile_hotkey(),
             close_to_quit: false,
             autostart: false,
             layout: LayoutSettings::default(),
         }
+    }
+}
+
+/// 字号钳制到可调范围；损坏值回落默认（settings.json 可被手动编辑）。
+pub fn clamp_font_px(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(FONT_SIZE_MIN_PX, FONT_SIZE_MAX_PX)
+    } else {
+        FONT_SIZE_DEFAULT_PX
     }
 }
 
@@ -101,7 +111,12 @@ impl Settings {
     /// 从 JSON 文件加载；文件不存在返回默认值。
     pub fn load(path: &Path) -> Result<Self, SettingsError> {
         match std::fs::read_to_string(path) {
-            Ok(text) => Ok(serde_json::from_str(&text)?),
+            Ok(text) => {
+                let mut settings: Self = serde_json::from_str(&text)?;
+                settings.editor_font_px = clamp_font_px(settings.editor_font_px);
+                settings.tile_font_px = clamp_font_px(settings.tile_font_px);
+                Ok(settings)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e.into()),
         }

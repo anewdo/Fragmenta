@@ -1,6 +1,5 @@
 //! 页面骨架：布局档位、内容栏、区块标题与设置卡片（ADR-0007）。
 
-use fragmenta_core::settings::FontScale;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Theme, v_flex};
 use gpui_kit::*;
@@ -54,7 +53,7 @@ pub fn content_column(max_width: Pixels) -> Div {
 /// 区块标题：固定 18px 半粗，颜色取前景色。
 pub fn section_title(title: impl IntoElement, foreground: Hsla) -> impl IntoElement {
     div()
-        .text_role(TextRole::SectionTitle, FontScale::Medium)
+        .text_role(TextRole::SectionTitle)
         .text_color(foreground)
         .child(title)
 }
