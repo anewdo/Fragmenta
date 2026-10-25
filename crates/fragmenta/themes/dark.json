@@ -1,0 +1,11 @@
+{
+  "name": "Fragmenta Dark",
+  "themes": [
+    {
+      "name": "Fragmenta Dark",
+      "mode": "dark",
+      "shadow": true,
+      "colors": {}
+    }
+  ]
+}

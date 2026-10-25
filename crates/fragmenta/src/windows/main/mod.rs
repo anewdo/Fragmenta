@@ -205,6 +205,8 @@ impl MainShell {
         let active = self.page == page;
         let accent = cx.theme().sidebar_accent;
         let accent_fg = cx.theme().sidebar_accent_foreground;
+        let hover = cx.theme().accent;
+        let foreground = cx.theme().sidebar_foreground;
         h_flex()
             .id(("sidebar-nav", page as usize))
             .w_full()
@@ -219,7 +221,7 @@ impl MainShell {
                 this.font_medium().bg(accent).text_color(accent_fg)
             })
             .when(!active, |this| {
-                this.hover(move |style| style.bg(accent.opacity(0.8)).text_color(accent_fg))
+                this.hover(move |style| style.bg(hover).text_color(foreground))
             })
             .child(Icon::new(icon).size_5())
             .when(!collapsed, |this| {
@@ -381,15 +383,13 @@ impl Render for MainShell {
             .min_w_0()
             .h_full()
             .relative()
-            .child(
-                div().flex_1().min_h_0().child(match self.page {
-                    Page::Notes => self.notes.clone().into_any_element(),
-                    Page::Todos => self.todos.clone().into_any_element(),
-                    Page::Categories => self.categories.clone().into_any_element(),
-                    Page::Tags => self.tags.clone().into_any_element(),
-                    Page::Settings => self.settings.clone().into_any_element(),
-                }),
-            )
+            .child(div().flex_1().min_h_0().child(match self.page {
+                Page::Notes => self.notes.clone().into_any_element(),
+                Page::Todos => self.todos.clone().into_any_element(),
+                Page::Categories => self.categories.clone().into_any_element(),
+                Page::Tags => self.tags.clone().into_any_element(),
+                Page::Settings => self.settings.clone().into_any_element(),
+            }))
             // 骑缝手柄与提示线挂在内容列左缘（absolute，不占布局空间），
             // 仅展开态
             .when(!collapsed, |this| this.child(handle));
@@ -414,13 +414,7 @@ impl Render for MainShell {
             ))
             // 中段：侧栏（收起 / 展开带 kit 宽度动画）与内容区紧密衔接，
             // 分隔 / 拖宽由骑缝手柄承担
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(sidebar)
-                    .child(content),
-            )
+            .child(h_flex().flex_1().min_h_0().child(sidebar).child(content))
             // toast 浮层最后挂载：后绘制的 absolute 浮层盖在页面内容之上
             .child(self.toast.clone())
     }

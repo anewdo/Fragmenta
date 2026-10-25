@@ -8,7 +8,7 @@ use std::sync::Arc;
 use fragmenta_core::db::Db;
 use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
 use global_hotkey::hotkey::HotKey;
-use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode as KitThemeMode};
+use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode};
 use gpui_kit::{
     Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
 };
@@ -18,7 +18,7 @@ use crate::editor::ImageStore;
 use crate::hotkey::{HotkeyController, HotkeyError};
 use crate::notes::{NotesStore, SaveStatus};
 use crate::settings::migrate::{self, DataDirError};
-use crate::settings::theme_schemes::{self, ThemeScheme};
+use crate::ui::theme;
 
 /// App 级设置 store：运行期设置修改的唯一入口（D8 副作用集中）。
 pub(crate) struct SettingsStore(pub(crate) Entity<SettingsState>);
@@ -45,6 +45,7 @@ pub struct SettingsState {
 impl SettingsState {
     /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
     pub fn new(settings: Settings, path: PathBuf, db: Arc<Db>, cx: &mut Context<Self>) -> Self {
+        theme::init(cx);
         let mut state = Self { settings, path, db };
         state.apply_theme_mode(cx);
         state
@@ -158,7 +159,11 @@ impl SettingsState {
     /// `"{exe}" --silent`，每次开启按当前 exe 路径重写（便携 exe 移动后
     /// 再次开启即刷新）；关闭时删除该键。注册表操作成功后才更新内存态
     /// 并持久化 + 广播；失败返回 `Err`，内存态与 settings.json 均不变。
-    pub fn set_autostart(&mut self, value: bool, cx: &mut Context<Self>) -> Result<(), AutostartError> {
+    pub fn set_autostart(
+        &mut self,
+        value: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), AutostartError> {
         if self.settings.autostart == value {
             return Ok(());
         }
@@ -281,29 +286,18 @@ impl SettingsState {
         }
         let mode = kit_mode_of(appearance);
         if cx.theme().mode != mode {
-            Theme::change(mode, None, cx);
+            theme::apply(mode, cx);
         }
     }
 
-    /// 按设置应用主题模式：内置色系 = Light 基线 + 核心 token 覆盖
-    /// （ADR-0005）；Auto 解析为当前系统外观（App 级，无窗口期同样可解析）。
+    /// 按设置加载内置 JSON；Auto 解析为当前系统外观。
     fn apply_theme_mode(&mut self, cx: &mut Context<Self>) {
-        match self.settings.theme {
-            ThemeMode::Light => Theme::change(KitThemeMode::Light, None, cx),
-            ThemeMode::Dark => Theme::change(KitThemeMode::Dark, None, cx),
-            ThemeMode::Auto => Theme::change(kit_mode_of(cx.window_appearance()), None, cx),
-            ThemeMode::DouShaGreen => Self::apply_color_scheme(theme_schemes::dou_sha_green(), cx),
-            ThemeMode::SkyBlue => Self::apply_color_scheme(theme_schemes::sky_blue(), cx),
-        }
-    }
-
-    /// 内置色系落色：先切 Light 基线（复位 Dark / 上一套色系的残余色），
-    /// 再以 `Theme::update` 覆盖核心 token（内部 refresh_windows，全窗口
-    /// 即时生效）。切回 Light / Dark / Auto 时 `Theme::change` 重载注册
-    /// 主题，覆盖自然清除，无状态残留。
-    fn apply_color_scheme(scheme: ThemeScheme, cx: &mut Context<Self>) {
-        Theme::change(KitThemeMode::Light, None, cx);
-        Theme::update(cx, |theme| scheme.apply(&mut theme.colors));
+        let mode = match self.settings.theme {
+            ThemeMode::Light => KitThemeMode::Light,
+            ThemeMode::Dark => KitThemeMode::Dark,
+            ThemeMode::Auto => kit_mode_of(cx.window_appearance()),
+        };
+        theme::apply(mode, cx);
     }
 
     /// 持久化到 settings.json；失败不中断交互（eprintln 容错，与项目现状一致）。
@@ -319,5 +313,40 @@ fn kit_mode_of(appearance: WindowAppearance) -> KitThemeMode {
     match appearance {
         WindowAppearance::Dark | WindowAppearance::VibrantDark => KitThemeMode::Dark,
         _ => KitThemeMode::Light,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{AppContext as _, TestAppContext, rgb};
+
+    /// 系统外观往返切换始终加载应用 JSON，显式模式不跟随系统变化。
+    #[gpui_kit::test]
+    fn auto_bridge_uses_json_and_respects_explicit_mode(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::component::theme::init);
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|cx| {
+            SettingsState::new(
+                Settings {
+                    theme: ThemeMode::Auto,
+                    ..Default::default()
+                },
+                PathBuf::new(),
+                db,
+                cx,
+            )
+        });
+        state.update(cx, |state, cx| {
+            state.sync_auto_mode(WindowAppearance::Dark, cx);
+            assert_eq!(cx.theme().mode, KitThemeMode::Dark);
+            assert_eq!(cx.theme().dark_theme.name.as_ref(), "Fragmenta Dark");
+            state.sync_auto_mode(WindowAppearance::Light, cx);
+            assert_eq!(cx.theme().mode, KitThemeMode::Light);
+            assert_eq!(cx.theme().primary, rgb(0x0F6CBD).into());
+            state.settings.theme = ThemeMode::Light;
+            state.sync_auto_mode(WindowAppearance::Dark, cx);
+            assert_eq!(cx.theme().mode, KitThemeMode::Light);
+        });
     }
 }

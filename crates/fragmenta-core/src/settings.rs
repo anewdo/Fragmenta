@@ -2,17 +2,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 序列化值（预留扩展位）。
+/// 主题选择；Auto 跟随系统深浅色。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
     #[default]
     Light,
     Dark,
     Auto,
-    /// 内置色系：豆沙绿。
-    DouShaGreen,
-    /// 内置色系：天空蓝。
-    SkyBlue,
 }
 
 /// 字号档位，映射 Theme.font_size。

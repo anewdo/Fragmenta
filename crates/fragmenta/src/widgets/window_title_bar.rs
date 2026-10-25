@@ -34,7 +34,11 @@ pub fn window_title_bar(content: impl IntoElement, window: &Window, cx: &App) ->
         .pl(LEFT_PADDING)
         .border_b_1()
         .border_color(theme.title_bar_border)
-        .bg(title_bar_background(theme.title_bar, theme.background))
+        .bg(if theme.mode.is_dark() {
+            title_bar_background(theme.title_bar, theme.background)
+        } else {
+            theme.title_bar.into()
+        })
         .when(is_linux, |this| {
             this.on_double_click(|_, window, _| window.zoom_window())
         })

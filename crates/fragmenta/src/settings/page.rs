@@ -6,7 +6,7 @@ use fragmenta_core::settings::{FontScale, ThemeMode};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -14,10 +14,10 @@ use crate::editor::ImageStore;
 use crate::hotkey::HotkeyError;
 use crate::notes::NotesStore;
 use crate::settings::SettingsStore;
-use crate::settings::theme_schemes;
 use crate::ui::layout::{
     CardStyle, LayoutClass, content_column, page_scroll, section_title, setting_card,
 };
+use crate::ui::theme;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{Toast, ToastStore};
 
@@ -514,7 +514,7 @@ impl Render for SettingsPage {
             .child(setting_section(
                 "外观",
                 foreground,
-                appearance_group(theme, font_scale, muted, primary, border, card),
+                appearance_group(theme, font_scale, muted, primary, border, card, cx),
             ))
             .child(setting_section("快捷键", foreground, self.hotkey_group(cx)))
             .child(setting_section("数据", foreground, self.data_group(cx)))
@@ -555,13 +555,14 @@ fn appearance_group(
     primary: Hsla,
     border: Hsla,
     card: CardStyle,
+    cx: &App,
 ) -> impl IntoElement {
     v_flex()
         .w_full()
         .gap(tokens::spacing::SM)
         .child(setting_card(
             card,
-            theme_section(theme, muted, primary, border),
+            theme_section(theme, muted, primary, border, cx),
         ))
         .child(setting_card(card, font_scale_row(font_scale, muted)))
 }
@@ -573,7 +574,7 @@ struct MockColors {
     content: Hsla,
 }
 
-/// 单套配色的矩形预览块：左条 = 菜单（深）、上条 = 标题栏、其余 = 内容（淡）。
+/// 单套配色的矩形预览块：左条 = 侧栏、上条 = 标题栏、其余 = 内容。
 fn mock_preview(colors: MockColors, chrome_w: Pixels, title_h: Pixels) -> Div {
     h_flex()
         .size_full()
@@ -588,35 +589,24 @@ fn mock_preview(colors: MockColors, chrome_w: Pixels, title_h: Pixels) -> Div {
         )
 }
 
-/// Light / Dark 基线预览色（与 kit 默认主题同族的中性色）。
-fn light_mock() -> MockColors {
+/// 缩略图读取实际主题定义，与窗口及开发重载保持一致。
+fn theme_mock(mode: KitThemeMode, cx: &App) -> MockColors {
+    let theme = theme::preview(mode, cx);
     MockColors {
-        chrome: rgb(0xE5E5E5).into(),
-        title: rgb(0xF0F0F0).into(),
-        content: rgb(0xFFFFFF).into(),
-    }
-}
-
-/// Dark 基线预览色。
-fn dark_mock() -> MockColors {
-    MockColors {
-        chrome: rgb(0x262626).into(),
-        title: rgb(0x171717).into(),
-        content: rgb(0x0A0A0A).into(),
-    }
-}
-
-/// 内置色系预览色：菜单与标题栏取深调、内容取淡调（与落色 token 一致）。
-fn scheme_mock(scheme: &theme_schemes::ThemeScheme) -> MockColors {
-    MockColors {
-        chrome: scheme.sidebar,
-        title: scheme.title_bar,
-        content: scheme.background,
+        chrome: theme.sidebar,
+        title: theme.title_bar,
+        content: theme.background,
     }
 }
 
 /// 主题节：说明文字 + 矩形颜色按钮行（选中即整套配色生效，枚举单选）。
-fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> impl IntoElement {
+fn theme_section(
+    theme: ThemeMode,
+    muted: Hsla,
+    primary: Hsla,
+    border: Hsla,
+    cx: &App,
+) -> impl IntoElement {
     v_flex()
         .w_full()
         .gap(tokens::spacing::SM)
@@ -644,7 +634,7 @@ fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> 
                     "Light",
                     theme == ThemeMode::Light,
                     ThemeMode::Light,
-                    mock_preview(light_mock(), px(18.), px(12.)),
+                    mock_preview(theme_mock(KitThemeMode::Light, cx), px(18.), px(12.)),
                     primary,
                     border,
                     muted,
@@ -654,7 +644,7 @@ fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> 
                     "Dark",
                     theme == ThemeMode::Dark,
                     ThemeMode::Dark,
-                    mock_preview(dark_mock(), px(18.), px(12.)),
+                    mock_preview(theme_mock(KitThemeMode::Dark, cx), px(18.), px(12.)),
                     primary,
                     border,
                     muted,
@@ -668,39 +658,15 @@ fn theme_section(theme: ThemeMode, muted: Hsla, primary: Hsla, border: Hsla) -> 
                     h_flex()
                         .size_full()
                         .child(
-                            mock_preview(light_mock(), px(9.), px(10.))
+                            mock_preview(theme_mock(KitThemeMode::Light, cx), px(9.), px(10.))
                                 .flex_1()
                                 .min_w_0(),
                         )
                         .child(
-                            mock_preview(dark_mock(), px(9.), px(10.))
+                            mock_preview(theme_mock(KitThemeMode::Dark, cx), px(9.), px(10.))
                                 .flex_1()
                                 .min_w_0(),
                         ),
-                    primary,
-                    border,
-                    muted,
-                ))
-                .child(theme_swatch(
-                    "theme-pick-dousha",
-                    theme_schemes::dou_sha_green().label,
-                    theme == ThemeMode::DouShaGreen,
-                    ThemeMode::DouShaGreen,
-                    mock_preview(
-                        scheme_mock(&theme_schemes::dou_sha_green()),
-                        px(18.),
-                        px(12.),
-                    ),
-                    primary,
-                    border,
-                    muted,
-                ))
-                .child(theme_swatch(
-                    "theme-pick-skyblue",
-                    theme_schemes::sky_blue().label,
-                    theme == ThemeMode::SkyBlue,
-                    ThemeMode::SkyBlue,
-                    mock_preview(scheme_mock(&theme_schemes::sky_blue()), px(18.), px(12.)),
                     primary,
                     border,
                     muted,

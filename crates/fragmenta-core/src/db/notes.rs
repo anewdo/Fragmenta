@@ -1,7 +1,4 @@
-//! 笔记数据访问（架构 §5.2）：upsert / delete / 筛选查询。
-//!
-//! upsert 只写标题与正文；分类 / 标签挂载由 taxonomy 接口管理，
-//! 查询侧经 JOIN 读回完整 `Note`。
+//! 笔记数据访问
 
 use std::collections::HashMap;
 
@@ -45,7 +42,6 @@ impl Db {
     }
 
     /// 删除笔记；note_tags 经外键级联清理。分类与标签均为显式实体，留存
-    /// （ADR-0008）。目标不存在时为无操作。
     pub fn delete_note(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;

@@ -25,7 +25,7 @@
   - 右栏：Markdown 编辑器（Source / Preview / Split 三模式），支持图片
 - **待办**：左侧月历选日（初始选中今日）+ 右侧选中日清单；标题行提供「今天」跳回与「新建」；新建 / 编辑共用 Dialog 表单（内容必填，可选「指定时间区间」，`end <= start` 拒绝、不支持跨天）；圆形 check 勾选完成（完成后内容与区间均加删除线）；hover 出编辑 / 删除按钮（删除无确认）；选中日无待办时空态提示
 - **设置**（四组）：
-  - 外观：主题（Light / Dark / Auto / 内置色系主题，ADR-0005）、字号三档
+  - 外观：主题（Light / Dark / Auto，ADR-0009）、字号三档
   - 快捷键：磁贴呼出热键（捕获式录入；冲突红字不落库；不允许清空）
   - 数据：数据目录与迁移、导出 md
   - 系统：开机自启动（默认关）、关闭主窗口时直接退出（默认关，默认托盘驻留）、显式退出按钮（spike ⑤ 定案：`QuitMode::Explicit` 全窗口关闭进程驻留，退出前置 `flush_all` 后 `cx.quit()`）
@@ -94,7 +94,8 @@ flowchart TB
 | `notes/editor.rs` | 笔记专用编辑器及三种编辑模式 |
 | `notes/page/` | 页面交互、视图、分类标签表单、标题栏操作区 |
 | `todos/mod.rs`、`todos/state.rs`、`todos/page/` | 待办功能接口、状态、月历页面与表单 |
-| `settings/mod.rs`、`settings/state.rs`、`settings/page.rs`、`settings/theme_schemes.rs` | 设置功能接口、状态、页面与内置色系 |
+| `settings/mod.rs`、`settings/state.rs`、`settings/page.rs` | 设置功能接口、状态与页面 |
+| `ui/theme.rs`、`themes/*.json` | 内置主题定义、加载、预览与开发期热重载 |
 | `editor/mod.rs`、`editor/source.rs`、`editor/image_path.rs` | 共享图库登记、源文本输入与图片路径插件 |
 | `windows/main/mod.rs`、`windows/main/home.rs` | 主窗口单例、导航与布局、首页占位 |
 | `windows/tile/mod.rs`、`windows/tile/open.rs`、`windows/tile/view.rs` | 磁贴创建、定位与交互 |
@@ -158,7 +159,7 @@ impl Db {
 
 ```rust
 pub struct Settings {
-    pub theme: ThemeMode,        // Light | Dark | Auto | 内置色系主题（ADR-0005，预设制、清单实施期候选挑选）
+    pub theme: ThemeMode,        // Light | Dark | Auto（ADR-0009）
     pub font_scale: FontScale,   // Small | Medium | Large，映射 Theme.font_size
     pub data_dir: PathBuf,       // 默认 {exe_dir}/data；内部平铺 fragmenta.db 与 imgs/
     pub tile_hotkey: String,     // 如 "ctrl+alt+n"；不允许清空
@@ -172,7 +173,7 @@ impl Settings {
 }
 ```
 
-`Auto` 经 spike ③ 验证保留：Windows 下 `observe_window_appearance` 可区分 Light/Dark 并在系统切换时回调。kit 主题不自动跟随系统外观（仅窗口外沿变化），Auto 实现为应用层桥接——监听外观回调后手动切换 kit 主题（机制见 §5.6）。色系主题为内置预设（整套分区域配色，覆盖背景 / 面板 / 标题栏 / 边框 / 前景 / 强调色等核心 token，其余继承 Light 基线），经 `Theme::update` 覆盖应用（ADR-0005）。
+`Auto` 根据 Windows 的 `observe_window_appearance` 回调在应用的 Light / Dark JSON 主题之间切换。主题定义统一归 `themes/*.json`，加载与应用集中于 `ui/theme.rs`，由 `SettingsState` 按主题选择调用。JSON 在编译期嵌入 EXE，开发构建额外监听源码主题目录；设置页预览读取同一份定义（ADR-0009）。
 
 ### 5.4 core::media
 
@@ -401,7 +402,7 @@ pub fn open_window<V: Render>(
 // 自动包 base::Root（overlay hosting），builder 只返回业务视图
 ```
 
-**主题**：`Theme` 全局单例，`ActiveTheme` trait（`cx.theme()`）；`Theme::global_mut(cx)` 切换 light/dark、设 `font_size`；`Theme::sync_base(cx)` 同步到 base 层；多窗口场景用 `App::refresh_windows()` 一次重绘全部存活窗口（同一 update 周期去重）。
+**主题**：`Theme` 全局单例，`ActiveTheme` trait（`cx.theme()`）；`ThemeRegistry` 加载内置 JSON 配置，`ui/theme.rs` 通过 `Theme::update` 与 `apply_config` 应用颜色并同步全部窗口。开发构建通过 `ThemeRegistry::watch_dir` 监听主题源文件，重载后重新应用尺寸规范。主题配色归 JSON，尺寸与文字角色归 `ui/tokens.rs`。
 
 **侧栏**：`Sidebar::new().collapsible(true).collapsed(state)` + `SidebarToggleButton`。
 
@@ -443,4 +444,4 @@ pub fn open_window<V: Render>(
 3. state 层 + tile 迁移到新架构（恢复到验证期同等功能：热键呼出、防抖自动保存、置顶；新增关闭 flush 语义）
 4. 主窗口 shell + 笔记页（列表 / 筛选 / 右键分类标签 / 卡片删除 / 编辑器三模式 / 图片粘贴）
 5. 待办页（首页日历随 Phase 12 废弃，首页内容待定）
-6. 设置页（主题含色系预设 / 字号 / 热键 / 数据目录与迁移 / 导出 / 自启动 / 关闭退出 / 托盘与静默启动，ADR-0004/0005/0006）
+6. 设置页（主题 Light / Dark / Auto、字号、热键、数据目录与迁移、导出、自启动、关闭退出、托盘与静默启动，ADR-0004/0006/0009）

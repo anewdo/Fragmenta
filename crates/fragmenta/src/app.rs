@@ -69,6 +69,8 @@ pub fn run() {
                 SettingsState::new(settings.clone(), settings_path.clone(), db.clone(), cx)
             });
             cx.set_global(SettingsStore(settings_state));
+            #[cfg(debug_assertions)]
+            crate::ui::theme::watch(cx);
             if let Err(err) = init_stores(&settings, db, cx) {
                 eprintln!("[fragmenta] store 初始化失败: {err}");
                 std::process::exit(1);
