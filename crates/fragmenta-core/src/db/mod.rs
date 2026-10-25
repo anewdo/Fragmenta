@@ -35,6 +35,15 @@ pub enum DbError {
     /// 重命名的目标分类名已被占用。
     #[error("分类 {0} 已存在")]
     CategoryExists(String),
+    /// 操作的目标标签不存在。
+    #[error("标签 {0} 不存在")]
+    TagNotFound(String),
+    /// 重命名的目标标签名已被占用。
+    #[error("标签 {0} 已存在")]
+    TagExists(String),
+    /// 新建实体的名称经 trim 后为空。
+    #[error("名称不能为空")]
+    BlankName,
     /// 库中时间戳不符合 RFC3339。
     #[error("库中时间戳损坏：{0}")]
     CorruptTimestamp(String),

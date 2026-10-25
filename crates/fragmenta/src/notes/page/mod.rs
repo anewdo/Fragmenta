@@ -9,8 +9,8 @@ mod view;
 
 use fragmenta_core::model::{Note, NoteFilter, SearchScope};
 
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::ResizableState;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::dialog::DialogContent;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -25,6 +25,7 @@ use crate::notes::editor::{EditorMode, NoteEditor};
 use crate::notes::{NoteKey, NotesEvent, NotesState};
 use crate::settings::SettingsEvent;
 use crate::settings::SettingsStore;
+use crate::taxonomy::{TaxonomyEvent, TaxonomyStore};
 use crate::utils::palette::parse_hex_color;
 
 /// 名字 → `#RRGGBB` 映射转为名字 → Hsla 展示色映射（非法色值按未选色处理）。
@@ -65,6 +66,8 @@ pub(crate) struct NotesPage {
     rename_seq: usize,
     _query_sub: Subscription,
     _changed_sub: Subscription,
+    /// 管理页建 / 改 / 删实体 → 列表与筛选选项重拉
+    _taxonomy_sub: Subscription,
     /// 正文字号档变化 → 列表标题与摘要随 content_font_px 重渲染。
     _settings_sub: Subscription,
 }
@@ -98,7 +101,12 @@ impl NotesPage {
                 this.refresh(cx);
             }
         });
-        // 订阅矩阵（§5.6）：正文字号变化 → 列表重渲染（content_font_px）
+        // 管理页建 / 改 / 删实体 → 列表与筛选选项重拉
+        let taxonomy = cx.global::<TaxonomyStore>().0.clone();
+        let taxonomy_sub = cx.subscribe(&taxonomy, |this, _, _: &TaxonomyEvent, cx| {
+            this.refresh(cx);
+        });
+        // 正文字号变化 → 列表重渲染（content_font_px）
         let settings = cx.global::<SettingsStore>().0.clone();
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();
@@ -122,6 +130,7 @@ impl NotesPage {
             rename_seq: 0,
             _query_sub: query_sub,
             _changed_sub: changed_sub,
+            _taxonomy_sub: taxonomy_sub,
             _settings_sub: settings_sub,
         };
         this.refresh(cx);

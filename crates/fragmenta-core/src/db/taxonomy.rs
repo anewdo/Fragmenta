@@ -1,7 +1,4 @@
-//! 分类与标签管理（架构 §5.2，ADR-0008）。
-//!
-//! 生命周期约定：分类与标签均为显式实体——建立后持续存在、支持重命名、
-//! 删笔记 / 摘挂载不清理，仅经管理页显式删除。颜色为用户选定的持久属性
+//! 分类与标签管理
 //! （`#RRGGBB` 或 NULL = 未选色）。
 
 use std::collections::HashMap;
@@ -105,6 +102,89 @@ impl Db {
         )?;
         if changed == 0 {
             return Err(DbError::CategoryNotFound(from.to_string()));
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 新建分类（管理页入口）：名称先经 trim，空白报错；重名报错；默认无色。
+    pub fn create_category(&self, name: &str) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DbError::BlankName);
+        }
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM categories WHERE name = ?1)",
+            params![name],
+            |row| row.get(0),
+        )?;
+        if exists {
+            return Err(DbError::CategoryExists(name.to_string()));
+        }
+        conn.execute("INSERT INTO categories (name) VALUES (?1)", params![name])?;
+        Ok(())
+    }
+
+    /// 新建标签（管理页入口）：语义同 [`Db::create_category`]。
+    pub fn create_tag(&self, name: &str) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DbError::BlankName);
+        }
+        let conn = self.conn.lock().unwrap();
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
+            params![name],
+            |row| row.get(0),
+        )?;
+        if exists {
+            return Err(DbError::TagExists(name.to_string()));
+        }
+        conn.execute("INSERT INTO tags (name) VALUES (?1)", params![name])?;
+        Ok(())
+    }
+
+    /// 删除分类（管理页显式删除，ADR-0008）：相关笔记的归属经外键
+    /// `ON DELETE SET NULL` 随本条语句置空，笔记本身完好；条目不存在报错。
+    pub fn delete_category(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute("DELETE FROM categories WHERE name = ?1", params![name])?;
+        if changed == 0 {
+            return Err(DbError::CategoryNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 删除标签（管理页显式删除）：全部挂载行经外键 `ON DELETE CASCADE`
+    /// 随本条语句摘除，笔记本身完好；条目不存在报错。
+    pub fn delete_tag(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute("DELETE FROM tags WHERE name = ?1", params![name])?;
+        if changed == 0 {
+            return Err(DbError::TagNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 重命名标签；笔记挂载经外键自动跟随。源不存在报错，目标重名报错。
+    pub fn rename_tag(&self, from: &str, to: &str) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let target_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tags WHERE name = ?1)",
+            params![to],
+            |row| row.get(0),
+        )?;
+        if target_exists {
+            return Err(DbError::TagExists(to.to_string()));
+        }
+        let changed = tx.execute(
+            "UPDATE tags SET name = ?1 WHERE name = ?2",
+            params![to, from],
+        )?;
+        if changed == 0 {
+            return Err(DbError::TagNotFound(from.to_string()));
         }
         tx.commit()?;
         Ok(())

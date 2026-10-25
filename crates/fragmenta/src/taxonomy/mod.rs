@@ -1,8 +1,5 @@
-//! 分类 / 标签管理页（taxonomy-pages spec，ADR-0008）。
+//! 分类 / 标签管理页。
 //!
-//! 分类页与标签页由同一通用组件装配：列表行依次为色点（未选色为中性
-//! 空点）、名称、引用数，名称字典序排序。状态层为 read-through 的登记
-//! 类型 TaxonomyStore（架构 §5.7 D3），页面禁止直接 import 数据层。
 
 mod page;
 mod state;
@@ -13,7 +10,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::{Entity, Global};
 
 pub(crate) use page::TaxonomyPage;
-pub(crate) use state::TaxonomyState;
+pub(crate) use state::{TaxonomyEvent, TaxonomyState};
 
 /// 功能入口的状态登记（主窗口页面经 global 取用）。
 pub(crate) struct TaxonomyStore(pub Entity<TaxonomyState>);
@@ -28,6 +25,14 @@ pub(crate) enum TaxonomyKind {
 }
 
 impl TaxonomyKind {
+    /// 实体名（界面文案用）。
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            TaxonomyKind::Category => "分类",
+            TaxonomyKind::Tag => "标签",
+        }
+    }
+
     /// 空态标题。
     pub(crate) fn empty_title(self) -> &'static str {
         match self {
@@ -39,8 +44,8 @@ impl TaxonomyKind {
     /// 空态说明。
     pub(crate) fn empty_description(self) -> &'static str {
         match self {
-            TaxonomyKind::Category => "在笔记卡片的「分类与标签」表单里输入即可添加",
-            TaxonomyKind::Tag => "在笔记卡片的「分类与标签」表单里输入即可添加",
+            TaxonomyKind::Category => "在上方输入行输入分类名，回车即可新建",
+            TaxonomyKind::Tag => "在上方输入行输入标签名，回车即可新建",
         }
     }
 
@@ -49,6 +54,14 @@ impl TaxonomyKind {
         match self {
             TaxonomyKind::Category => IconName::Folder,
             TaxonomyKind::Tag => IconName::Tags,
+        }
+    }
+
+    /// 新建输入行占位文案。
+    pub(crate) fn create_placeholder(self) -> &'static str {
+        match self {
+            TaxonomyKind::Category => "新建分类，回车保存",
+            TaxonomyKind::Tag => "新建标签，回车保存",
         }
     }
 
