@@ -101,9 +101,11 @@ impl TileView {
         let _ = win32::install_edge_subclass(window, EDGE_HOT, CORNER_HOT);
         // 圆角窗口区域（失败不阻断：界面层圆角描边兜底）
         let _ = win32::set_rounded_region(window, CORNER);
-        // 窗口 bounds 变化（用户 resize / 拖动 / 跨显示器 scale 变化）时重设区域
-        let bounds_sub = cx.observe_window_bounds(window, |this, window, _| {
+        // 窗口 bounds 变化（用户 resize / 拖动 / 跨显示器 scale 变化）时重设区域，
+        // 并把调整后的尺寸记入设置（下次呼出沿用，防抖写盘）
+        let bounds_sub = cx.observe_window_bounds(window, |this, window, cx| {
             this.refresh_rounded_region(window);
+            this.record_size(window, cx);
         });
 
         let settings = cx.global::<SettingsStore>().0.clone();
@@ -246,6 +248,17 @@ impl TileView {
         }
         self.region = Some(dims);
         let _ = win32::set_rounded_region(window, CORNER);
+    }
+
+    /// 磁贴尺寸记忆：把当前窗口尺寸提交设置层（防抖落盘），下次呼出
+    /// 的新磁贴按此尺寸打开。拖动（仅位移）与跨显示器 scale 变化不改
+    /// 变逻辑尺寸，设置层同值跳过。
+    fn record_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let size = window.viewport_size();
+        let settings = cx.global::<SettingsStore>().0.clone();
+        settings.update(cx, |state, cx| {
+            state.set_tile_size(size.width, size.height, cx)
+        });
     }
 }
 

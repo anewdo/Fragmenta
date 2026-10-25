@@ -1,16 +1,13 @@
-//! 字号档位不写全局主题：kit 组件几何按 16px rem 基准设计，全局放大
-//! 会使 px 固定几何组件（日历等）文字溢出。字号只作用于内容阅读面，
-//! 由各内容组件经 [`SettingsState::content_font_px`] 显式应用。
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use fragmenta_core::db::Db;
 use fragmenta_core::settings::{FontScale, Settings, ThemeMode};
 use global_hotkey::hotkey::HotKey;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode};
 use gpui_kit::{
-    Context, Entity, EventEmitter, Global, Pixels, Subscription, Window, WindowAppearance, px,
+    Context, Entity, EventEmitter, Global, Pixels, Subscription, Task, Window, WindowAppearance, px,
 };
 
 use crate::autostart::AutostartError;
@@ -40,13 +37,31 @@ pub struct SettingsState {
     /// 共享数据库门面（与 notes / todos store 同一 `Arc<Db>`），
     /// 供 `set_data_dir` 迁移编排在线备份与连接热替换。
     db: Arc<Db>,
+    /// 磁贴尺寸防抖写盘任务；`None` 即无待写内容。
+    tile_persist: Option<Task<()>>,
+    /// 应用退出兜底：退出前落盘未到期的磁贴尺寸。
+    _quit_sub: Subscription,
 }
+
+/// 磁贴尺寸写盘防抖 原生 resize 拖拽期间 WM_SIZE
+/// 连续触发 bounds 观察，落盘按此窗口合并为拖拽结束后的最后一次。
+const TILE_SIZE_DEBOUNCE: Duration = Duration::from_millis(400);
 
 impl SettingsState {
     /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
     pub fn new(settings: Settings, path: PathBuf, db: Arc<Db>, cx: &mut Context<Self>) -> Self {
         theme::init(cx);
-        let mut state = Self { settings, path, db };
+        let quit_sub = cx.on_app_quit(|state, _| {
+            state.flush_tile_persist();
+            async {}
+        });
+        let mut state = Self {
+            settings,
+            path,
+            db,
+            tile_persist: None,
+            _quit_sub: quit_sub,
+        };
         state.apply_theme_mode(cx);
         state
     }
@@ -111,6 +126,37 @@ impl SettingsState {
     pub fn set_editor_source_width(&mut self, width: Pixels) {
         self.settings.layout.editor_source_width = width.as_f32();
         self.persist();
+    }
+
+    /// 磁贴窗口尺寸（逻辑像素）：呼出新磁贴的打开尺寸。
+    pub fn tile_size(&self) -> (Pixels, Pixels) {
+        (
+            px(self.settings.layout.tile_width),
+            px(self.settings.layout.tile_height),
+        )
+    }
+
+    /// 记录用户调整后的磁贴尺寸（磁贴视图 bounds 观察回调提交），
+    /// 防抖写盘。窗口拖动（仅位移）与跨显示器 scale 变化不改变逻辑
+    /// 尺寸，同值提交直接跳过。
+    pub fn set_tile_size(&mut self, width: Pixels, height: Pixels, cx: &mut Context<Self>) {
+        let (w, h) = (width.as_f32(), height.as_f32());
+        if self.settings.layout.tile_width == w && self.settings.layout.tile_height == h {
+            return;
+        }
+        self.settings.layout.tile_width = w;
+        self.settings.layout.tile_height = h;
+        self.tile_persist = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TILE_SIZE_DEBOUNCE).await;
+            let _ = this.update(cx, |state, _| state.flush_tile_persist());
+        }));
+    }
+
+    /// 磁贴尺寸立即落盘（防抖到期 / 应用退出兜底）：有待写任务才写。
+    fn flush_tile_persist(&mut self) {
+        if self.tile_persist.take().is_some() {
+            self.persist();
+        }
     }
 
     pub fn shrink_database_memory(&self) {
@@ -320,6 +366,35 @@ fn kit_mode_of(appearance: WindowAppearance) -> KitThemeMode {
 mod tests {
     use super::*;
     use gpui_kit::{AppContext as _, TestAppContext, rgb};
+
+    /// 磁贴尺寸记忆：内存即时生效，落盘按防抖窗口合并；到期后新进程
+    /// 从 settings.json 读到调整后的尺寸。
+    #[gpui_kit::test]
+    fn tile_size_persists_after_debounce_and_reloads(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::component::theme::init);
+        let path = PathBuf::from("temp/tile-size-settings.json");
+        let _ = std::fs::remove_file(&path);
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|cx| SettingsState::new(Settings::default(), path.clone(), db, cx));
+        state.update(cx, |state, cx| {
+            // 默认值即磁贴初始尺寸
+            assert_eq!(state.tile_size(), (px(360.), px(480.)));
+            state.set_tile_size(px(420.), px(560.), cx);
+            // 同值提交（拖动 / scale 变化不改逻辑尺寸）跳过
+            state.set_tile_size(px(420.), px(560.), cx);
+            assert_eq!(state.tile_size(), (px(420.), px(560.)));
+        });
+        // 防抖未到期：磁盘仍为默认值
+        assert_eq!(Settings::load(&path).unwrap().layout.tile_width, 360.);
+        cx.executor().run_until_parked();
+        cx.executor().advance_clock(TILE_SIZE_DEBOUNCE);
+        cx.executor().run_until_parked();
+        // 到期落盘：重载（新进程）读到记忆尺寸
+        let reloaded = Settings::load(&path).unwrap();
+        assert_eq!(reloaded.layout.tile_width, 420.);
+        assert_eq!(reloaded.layout.tile_height, 560.);
+        let _ = std::fs::remove_file(&path);
+    }
 
     /// 系统外观往返切换始终加载应用 JSON，显式模式不跟随系统变化。
     #[gpui_kit::test]

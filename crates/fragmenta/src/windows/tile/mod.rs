@@ -2,19 +2,17 @@
 //!
 //! PopUp + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为
 //! ——首开中心对准光标、连开相对最新现存磁贴的当前位置级联偏移 26 逻辑
-//! 像素、全关重置；圆角边框经 `SetWindowRgn` 窗口区域 + 界面层圆角描边
-//! 实现。窗口打开与定位归 [`open`]，视图 / 保存闭环归 [`view`]；八向边缘
-//! resize 经 win32 的 WM_NCHITTEST 子类化走系统原生模态循环，最小尺寸由
-//! `window_min_size` 经后端 WM_GETMINMAXINFO 钳制。
+//! 像素、全关重置；打开尺寸取自 settings 布局记忆（`LayoutSettings::tile_*`，
+//! 用户调整磁贴后经视图层防抖写回 settings.json）；圆角边框经
+//! `SetWindowRgn` 窗口区域 + 界面层圆角描边实现。窗口打开与定位归 [`open`]，
+//! 视图 / 保存闭环归 [`view`]；八向边缘 resize 经 win32 的 WM_NCHITTEST
+//! 子类化走系统原生模态循环，最小尺寸由 `window_min_size` 经后端
+//! WM_GETMINMAXINFO 钳制。
 
 mod open;
 mod view;
 
 pub use open::open_new;
-
-/// 磁贴窗口初始尺寸（逻辑像素，可拖拽边缘调整大小）。
-pub(crate) const TILE_W: f32 = 360.;
-pub(crate) const TILE_H: f32 = 480.;
 
 /// 相邻磁贴的级联偏移（逻辑像素，架构 §5.8）。
 pub(crate) const CASCADE: f32 = 26.;

@@ -10,7 +10,9 @@ use std::sync::Mutex;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{CASCADE, MIN_H, MIN_W, TILE_H, TILE_W, view::TileView};
+use crate::settings::SettingsStore;
+
+use super::{CASCADE, MIN_H, MIN_W, view::TileView};
 
 /// 场上磁贴登记项：弱引用探测存活；窗口句柄供级联定位取当前位置。
 struct TileEntry {
@@ -22,6 +24,18 @@ static TILES: Mutex<Vec<TileEntry>> = Mutex::new(Vec::new());
 
 /// 打开新磁贴：每次呼出新开一个窗口，旧磁贴保留（D7 磁贴多开）。
 pub fn open_new(cx: &mut App) {
+    // 打开尺寸取自设置记忆（用户最近一次磁贴调整，默认 360×480）；
+    // 手改 settings.json 可能给出低于最小尺寸的值，钳到 window_min_size 同款下限
+    let (tile_w, tile_h) = cx
+        .global::<SettingsStore>()
+        .0
+        .read(cx)
+        .tile_size();
+    let (tile_w, tile_h) = (
+        tile_w.as_f32().max(MIN_W),
+        tile_h.as_f32().max(MIN_H),
+    );
+
     let mut tiles = TILES.lock().expect("磁贴登记表锁中毒");
     // 清理已关磁贴；场上清空后下一次呼出自然回到首开定位（§5.8 重置规则）
     tiles.retain(|tile| tile.view.is_upgradable());
@@ -51,21 +65,23 @@ pub fn open_new(cx: &mut App) {
     let cursor = crate::win32::cursor_placement();
     let (origin, display_id) = if let Some((x, y, monitor, display_id)) = cascade_from {
         (
-            clamp_to_monitor(monitor, x + CASCADE, y + CASCADE),
+            clamp_to_monitor(monitor, x + CASCADE, y + CASCADE, tile_w, tile_h),
             display_id,
         )
     } else if let Some(p) = cursor.as_ref() {
         (
             clamp_to_monitor(
                 p.monitor,
-                p.cursor.0 - TILE_W * 0.5,
-                p.cursor.1 - TILE_H * 0.5,
+                p.cursor.0 - tile_w * 0.5,
+                p.cursor.1 - tile_h * 0.5,
+                tile_w,
+                tile_h,
             ),
             p.display_id,
         )
     } else {
         // 光标定位不可用：回退主显示器居中
-        let bounds = Bounds::centered(None, size(px(TILE_W), px(TILE_H)), cx);
+        let bounds = Bounds::centered(None, size(px(tile_w), px(tile_h)), cx);
         let display_id = cx.primary_display().map(|d| u64::from(d.id())).unwrap_or(0);
         (
             (bounds.origin.x.as_f32(), bounds.origin.y.as_f32()),
@@ -75,7 +91,7 @@ pub fn open_new(cx: &mut App) {
 
     let bounds = Bounds {
         origin: point(px(origin.0), px(origin.1)),
-        size: size(px(TILE_W), px(TILE_H)),
+        size: size(px(tile_w), px(tile_h)),
     };
     // display_id 绑定目标显示器：gpui 后端按目标显示器 scale 换算 bounds
     // 并校验中心点，缺失该 id 时窗口回退到主显示器默认居中（§9 条目 5）
@@ -124,10 +140,17 @@ fn monitor_containing(cx: &App, p: Point<Pixels>) -> Option<((f32, f32, f32, f32
 }
 
 /// 窗口左上角钳制在显示器内（完整可见；显示器小于窗口时贴左上角）。
-fn clamp_to_monitor(monitor: (f32, f32, f32, f32), x: f32, y: f32) -> (f32, f32) {
+/// `w` / `h` 为本次打开的窗口尺寸（钳制范围随记忆尺寸变化）。
+fn clamp_to_monitor(
+    monitor: (f32, f32, f32, f32),
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) -> (f32, f32) {
     let (bx, by, bw, bh) = monitor;
     (
-        x.clamp(bx, (bx + bw - TILE_W).max(bx)),
-        y.clamp(by, (by + bh - TILE_H).max(by)),
+        x.clamp(bx, (bx + bw - w).max(bx)),
+        y.clamp(by, (by + bh - h).max(by)),
     )
 }

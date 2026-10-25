@@ -43,6 +43,10 @@ pub struct LayoutSettings {
     pub sidebar_width: f32,
     pub notes_list_width: f32,
     pub editor_source_width: f32,
+    /// 磁贴窗口尺寸（逻辑像素）：呼出新磁贴按此尺寸打开，用户调整磁贴
+    /// 后更新；默认值即磁贴初始尺寸。
+    pub tile_width: f32,
+    pub tile_height: f32,
 }
 
 impl Default for LayoutSettings {
@@ -51,6 +55,8 @@ impl Default for LayoutSettings {
             sidebar_width: 255.,
             notes_list_width: 400.,
             editor_source_width: 360.,
+            tile_width: 300.,
+            tile_height: 360.,
         }
     }
 }
