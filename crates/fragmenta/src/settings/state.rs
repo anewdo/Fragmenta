@@ -380,20 +380,31 @@ mod tests {
     #[gpui_kit::test]
     fn tile_size_persists_after_debounce_and_reloads(cx: &mut TestAppContext) {
         cx.update(gpui_kit::component::theme::init);
-        let path = PathBuf::from("temp/tile-size-settings.json");
-        let _ = std::fs::remove_file(&path);
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../temp/tests")
+            .join(format!("tile-size-settings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
         let db = Arc::new(Db::open_in_memory().unwrap());
+        let defaults = Settings::default().layout;
         let state = cx.new(|cx| SettingsState::new(Settings::default(), path.clone(), db, cx));
         state.update(cx, |state, cx| {
             // 默认值即磁贴初始尺寸
-            assert_eq!(state.tile_size(), (px(360.), px(480.)));
+            assert_eq!(
+                state.tile_size(),
+                (px(defaults.tile_width), px(defaults.tile_height))
+            );
             state.set_tile_size(px(420.), px(560.), cx);
             // 同值提交（拖动 / scale 变化不改逻辑尺寸）跳过
             state.set_tile_size(px(420.), px(560.), cx);
             assert_eq!(state.tile_size(), (px(420.), px(560.)));
         });
         // 防抖未到期：磁盘仍为默认值
-        assert_eq!(Settings::load(&path).unwrap().layout.tile_width, 360.);
+        assert_eq!(
+            Settings::load(&path).unwrap().layout.tile_width,
+            defaults.tile_width
+        );
         cx.executor().run_until_parked();
         cx.executor().advance_clock(TILE_SIZE_DEBOUNCE);
         cx.executor().run_until_parked();
@@ -401,7 +412,7 @@ mod tests {
         let reloaded = Settings::load(&path).unwrap();
         assert_eq!(reloaded.layout.tile_width, 420.);
         assert_eq!(reloaded.layout.tile_height, 560.);
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 系统外观往返切换始终加载应用 JSON，显式模式不跟随系统变化。

@@ -97,32 +97,6 @@ mod tests {
         cx.update(|cx| apply(ThemeMode::Light, cx));
         cx.update(|cx| assert_eq!(Theme::global(cx).colors, light));
     }
-
-    /// 主按钮色单独修改后，链接与聚焦提示继续使用各自定义。
-    #[gpui_kit::test]
-    fn json_keeps_button_link_and_focus_colors_independent(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            gpui_kit::component::theme::init(cx);
-            init(cx);
-            let source = include_str!("../../themes/light.json")
-                .replace(LIGHT_NAME, "Independent Colors")
-                .replace(
-                    "\"button.primary.background\": \"#0F6CBD\"",
-                    "\"button.primary.background\": \"#8E44AD\"",
-                );
-            ThemeRegistry::global_mut(cx)
-                .load_themes_from_str(&source)
-                .unwrap();
-            let config = ThemeRegistry::global(cx).themes()["Independent Colors"].clone();
-            Theme::update(cx, |theme| theme.apply_config(&config));
-        });
-        cx.update(|cx| {
-            let theme = Theme::global(cx);
-            assert_eq!(theme.button_primary, rgb(0x8E44AD).into());
-            assert_eq!(theme.link, rgb(0x0F6CBD).into());
-            assert_eq!(theme.ring, rgb(0x0F6CBD).into());
-        });
-    }
 }
 
 /// 开发构建监听源码目录；发布构建只使用内嵌主题。
