@@ -35,7 +35,8 @@ pub mod widths {
     pub const TAXONOMY_CONTENT: Pixels = px(560.);
     pub const DIALOG: Pixels = px(380.);
     pub const TOAST_MAX: Pixels = px(360.);
-    pub const CALENDAR: Pixels = px(272.);
+    /// 待办页日历栏宽：日历卡（7 × 40 单元格 + 内边距 24 + 边框 2）306 + 页面留白 24。
+    pub const CALENDAR: Pixels = px(330.);
     pub const TILE: Pixels = px(360.);
     pub const TILE_MIN: Pixels = px(240.);
 

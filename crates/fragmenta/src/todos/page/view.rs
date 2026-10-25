@@ -1,14 +1,17 @@
 //! 待办页视图构建：新建 / 编辑表单 / 待办条目 / 清单区 / render 组装。
 //! 状态与交互逻辑（订阅 / 快照 / 表单提交）见 `mod.rs`。
 
-use chrono::Datelike;
+use std::cell::Cell;
+use std::rc::Rc;
+
+use chrono::{Datelike, NaiveDate, Weekday};
 
 use fragmenta_core::model::Todo;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::{Calendar, CalendarItem, CalendarItemKind, CalendarItemState};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::calendar::Calendar;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dialog::DialogContent;
 use gpui_kit::component::empty::{
@@ -26,6 +29,33 @@ use gpui_kit::*;
 
 use super::{TodoForm, TodosPage};
 use crate::settings::SettingsStore;
+use crate::ui::tokens;
+
+/// 日历单元格边长：kit 默认 32 放大到 40（对齐 kit Large 档几何），
+/// 为右上角圆点留出空间。
+const CALENDAR_CELL: Pixels = px(40.);
+/// 待办圆点直径与距单元格右上角的内缩。
+const CALENDAR_DOT: Pixels = px(4.);
+const CALENDAR_DOT_INSET: Pixels = px(6.);
+
+/// 由网格单元格的日号与邻月标记还原实际日期：前导日（日号 > 15）属上月尾、
+/// 尾随日（日号 ≤ 15）属次月头——网格溢出至多 6 天，两段日号不相交。
+fn visible_date(year: i32, month: u8, day: u32, adjacent: bool) -> NaiveDate {
+    let (year, month) = if !adjacent {
+        (year, month as u32)
+    } else if day > 15 {
+        if month == 1 {
+            (year - 1, 12)
+        } else {
+            (year, month as u32 - 1)
+        }
+    } else if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month as u32 + 1)
+    };
+    NaiveDate::from_ymd_opt(year, month, day).expect("网格单元格日恒为合法日期")
+}
 
 /// Dialog 表单内容：内容输入 + 「指定时间区间」勾选 + 起止时间（勾选时显示）。
 ///
@@ -262,6 +292,149 @@ impl TodosPage {
             self.selected.day()
         )
     }
+
+    /// 左日历卡：base 层承载全部交互（点选 / 翻月 / 月年选择 / 键盘），
+    /// 装修沿用 kit 日历开箱规则并放大单元格；自定义之处：周一为列首
+    /// （「一」…「六」「日」）、月 / 年用阿拉伯数字、有待办的日子右上角加圆点。
+    fn calendar_card(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (year, month) = {
+            let state = self.calendar.read(cx);
+            (state.current_year(), state.current_month())
+        };
+        let theme = cx.theme();
+        let (border, muted, foreground) = (theme.border, theme.muted_foreground, theme.foreground);
+        let (accent, accent_foreground) = (theme.accent, theme.accent_foreground);
+        let (primary, primary_foreground) = (theme.primary, theme.primary_foreground);
+        let secondary_hover = theme.secondary_hover;
+        let (cell_radius, card_radius) = (theme.radius * 2., theme.radius_lg);
+        let marked = self.marked.clone();
+        // base 对同一条目先调 label 定文案、后调 item 装修，日号经此传递；
+        // 每格一步，仅成立单月显示（本页固定 1 个月）
+        let day_of_item = Rc::new(Cell::new(0u32));
+        let (label_day, item_day) = (day_of_item.clone(), day_of_item);
+
+        Calendar::new(
+            ("todos-calendar", self.calendar.entity_id()),
+            &self.calendar,
+        )
+        .first_day_of_week(Weekday::Mon)
+        .label(move |kind: CalendarItemKind, value: i32| -> SharedString {
+            match kind {
+                // 星期序号 0 = 周日 … 6 = 周六（base 的传值约定）
+                CalendarItemKind::Weekday => match value {
+                    0 => "日".into(),
+                    1 => "一".into(),
+                    2 => "二".into(),
+                    3 => "三".into(),
+                    4 => "四".into(),
+                    5 => "五".into(),
+                    _ => "六".into(),
+                },
+                CalendarItemKind::Month | CalendarItemKind::MonthToggle => {
+                    format!("{value}月").into()
+                }
+                CalendarItemKind::Day => {
+                    label_day.set(value as u32);
+                    value.to_string().into()
+                }
+                _ => value.to_string().into(),
+            }
+        })
+        .item(move |item: CalendarItem, st: CalendarItemState, _, _| {
+            let kind = st.kind();
+            let item = match kind {
+                CalendarItemKind::Previous => item
+                    .clear_children()
+                    .child(Icon::new(IconName::ChevronLeft).size_4()),
+                CalendarItemKind::Next => item
+                    .clear_children()
+                    .child(Icon::new(IconName::ChevronRight).size_4()),
+                _ => item,
+            };
+            let has_todo = kind == CalendarItemKind::Day
+                && marked.contains(&visible_date(year, month, item_day.get(), st.is_muted()));
+            item.relative()
+                .size(CALENDAR_CELL)
+                .rounded(cell_radius)
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(kind != CalendarItemKind::Weekday, |this| this.text_sm())
+                .when(kind == CalendarItemKind::Weekday, |this| {
+                    this.text_xs()
+                        .font_weight(FontWeight::NORMAL)
+                        .text_color(muted)
+                })
+                .when(kind == CalendarItemKind::Month, |this| this.text_xs())
+                .when(
+                    matches!(
+                        kind,
+                        CalendarItemKind::MonthToggle | CalendarItemKind::YearToggle
+                    ),
+                    |this| this.text_sm().font_weight(FontWeight::MEDIUM),
+                )
+                .when(
+                    matches!(
+                        kind,
+                        CalendarItemKind::Month | CalendarItemKind::MonthToggle
+                    ),
+                    |this| {
+                        this.when(kind == CalendarItemKind::Month, |this| this.w_full().my_1())
+                            .when(kind == CalendarItemKind::MonthToggle, |this| {
+                                this.w_auto().px_2()
+                            })
+                    },
+                )
+                .when(
+                    matches!(kind, CalendarItemKind::Year | CalendarItemKind::YearToggle),
+                    |this| {
+                        this.when(kind == CalendarItemKind::Year, |this| this.w_full().my_1())
+                            .when(kind == CalendarItemKind::YearToggle, |this| {
+                                this.w_auto().px_2()
+                            })
+                    },
+                )
+                .when(st.is_muted(), |this| {
+                    this.text_color(muted)
+                        .when(st.is_disabled(), |this| this.opacity(0.5))
+                })
+                .when(st.is_in_range(), |this| {
+                    this.bg(accent).text_color(accent_foreground)
+                })
+                .when(
+                    !st.is_active() && !st.is_disabled() && kind != CalendarItemKind::Weekday,
+                    |this| this.hover(|style| style.bg(secondary_hover).text_color(foreground)),
+                )
+                .when(st.is_active(), |this| {
+                    this.bg(primary).text_color(primary_foreground)
+                })
+                .when(st.is_today() && !st.is_active(), |this| {
+                    this.bg(accent).text_color(accent_foreground)
+                })
+                .when(has_todo, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top(CALENDAR_DOT_INSET)
+                            .right(CALENDAR_DOT_INSET)
+                            .size(CALENDAR_DOT)
+                            .rounded_full()
+                            .bg(if st.is_active() {
+                                primary_foreground
+                            } else {
+                                primary
+                            }),
+                    )
+                })
+                .into_any_element()
+        })
+        .border_1()
+        .border_color(border)
+        .rounded(card_radius)
+        .p_3()
+        .gap_0p5()
+        .into_any_element()
+    }
 }
 
 impl Render for TodosPage {
@@ -352,7 +525,10 @@ impl Render for TodosPage {
                         .on_click({
                             let weak = weak.clone();
                             move |_, _, cx| {
-                                let _ = weak.update(cx, |this, cx| this.refresh(cx));
+                                let _ = weak.update(cx, |this, cx| {
+                                    this.refresh(cx);
+                                    this.refresh_marked(cx);
+                                });
                             }
                         }),
                 )
@@ -405,11 +581,10 @@ impl Render for TodosPage {
             .size_full()
             .child(
                 v_flex()
-                    // 272 = kit 日历卡默认宽 248 + p_3 两侧留白 24
-                    .w(px(272.))
+                    .w(tokens::widths::CALENDAR)
                     .flex_shrink_0()
-                    .p_3()
-                    .child(Calendar::new(&self.calendar)),
+                    .p(tokens::spacing::MD)
+                    .child(self.calendar_card(cx)),
             )
             .child(
                 v_flex()
@@ -419,5 +594,25 @@ impl Render for TodosPage {
                     .child(subtitle)
                     .child(list_area),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::visible_date;
+    use chrono::NaiveDate;
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    /// 邻月单元格按日号区间辨别方向：前导日归上月尾、尾随日归次月头，跨年正确。
+    #[test]
+    fn visible_date_resolves_adjacent_month_days() {
+        assert_eq!(visible_date(2026, 10, 15, false), date(2026, 10, 15));
+        assert_eq!(visible_date(2026, 10, 30, true), date(2026, 9, 30));
+        assert_eq!(visible_date(2026, 1, 28, true), date(2025, 12, 28));
+        assert_eq!(visible_date(2026, 10, 4, true), date(2026, 11, 4));
+        assert_eq!(visible_date(2026, 12, 3, true), date(2027, 1, 3));
     }
 }

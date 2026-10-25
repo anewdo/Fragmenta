@@ -1,4 +1,4 @@
-//! 待办页（Phase 11）：左侧日历选日 + 右侧选中日清单。
+//! 待办页（Phase 11）：左侧日历选日 + 右侧选中日清单，有待办的日子日历角标圆点。
 //!
 //! 数据流遵循架构铁律：render 内不查询——清单为订阅（`CalendarEvent::Selected` /
 //! `TodosEvent::Changed`）时拉取的页字段快照；新建 / 编辑共用同一 Dialog 表单。
@@ -6,7 +6,9 @@
 
 mod view;
 
-use chrono::{Local, NaiveDate, NaiveTime};
+use std::collections::HashSet;
+
+use chrono::{Days, Local, NaiveDate, NaiveTime};
 
 use fragmenta_core::model::Todo;
 
@@ -59,7 +61,12 @@ pub(crate) struct TodosPage {
     selected: NaiveDate,
     /// 选中日清单快照：查询失败时存错误信息（错误占位 + 重试）。
     list: Result<Vec<Todo>, String>,
+    /// 可见日历网格内存在待办的日子（单元格右上角圆点）。
+    marked: HashSet<NaiveDate>,
+    /// `marked` 对应的可见月；base 每帧 notify，翻月才重拉。
+    marked_month: (i32, u8),
     _calendar_sub: Subscription,
+    _calendar_observe: Subscription,
     _changed_sub: Subscription,
     /// 正文字号档变化 → 清单条目随 content_font_px 重渲染。
     _settings_sub: Subscription,
@@ -82,10 +89,22 @@ impl TodosPage {
                 this.refresh(cx);
             }
         });
-        // store 增删改 → 重拉选中日清单
+        // 可见月变化（翻月 / 点选邻月日 / 月年选择）→ 重拉圆点矩阵；
+        // base 每帧都会 set_number_of_months 触发 notify，故以可见月为键去重
+        let calendar_observe = cx.observe(&calendar, |this, calendar, cx| {
+            let key = {
+                let state = calendar.read(cx);
+                (state.current_year(), state.current_month())
+            };
+            if this.marked_month != key {
+                this.refresh_marked(cx);
+            }
+        });
+        // store 增删改 → 重拉选中日清单与圆点矩阵
         let changed_sub = cx.subscribe(&todos, |this, _, event: &TodosEvent, cx| {
             if matches!(event, TodosEvent::Changed) {
                 this.refresh(cx);
+                this.refresh_marked(cx);
             }
         });
         // 订阅矩阵（§5.6）：正文字号变化 → 清单重渲染（content_font_px）
@@ -99,11 +118,15 @@ impl TodosPage {
             calendar,
             selected: today,
             list: Ok(Vec::new()),
+            marked: HashSet::new(),
+            marked_month: (0, 0),
             _calendar_sub: calendar_sub,
+            _calendar_observe: calendar_observe,
             _changed_sub: changed_sub,
             _settings_sub: settings_sub,
         };
         this.refresh(cx);
+        this.refresh_marked(cx);
         this
     }
 
@@ -115,6 +138,37 @@ impl TodosPage {
             .read(cx)
             .todos_between(selected, selected)
             .map_err(|err| err.to_string());
+        cx.notify();
+    }
+
+    /// 重拉圆点快照（render 外调用）：取可见月 ± 一周，覆盖网格溢出的邻月日；
+    /// 查询失败退化为无圆点（清单区错误占位已承载可见反馈）。
+    fn refresh_marked(&mut self, cx: &mut Context<Self>) {
+        let (year, month) = {
+            let state = self.calendar.read(cx);
+            (state.current_year(), state.current_month())
+        };
+        let first = NaiveDate::from_ymd_opt(year, month as u32, 1).expect("当前月首日合法");
+        let last = if month == 12 {
+            NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            NaiveDate::from_ymd_opt(year, month as u32 + 1, 1)
+        }
+        .and_then(|next| next.pred_opt())
+        .expect("次月首日前一日合法");
+        let from = first
+            .checked_sub_days(Days::new(7))
+            .expect("前一周在支持范围内");
+        let to = last
+            .checked_add_days(Days::new(7))
+            .expect("后一周在支持范围内");
+        self.marked = self
+            .todos
+            .read(cx)
+            .todos_between(from, to)
+            .map(|todos| todos.into_iter().map(|todo| todo.date).collect())
+            .unwrap_or_default();
+        self.marked_month = (year, month);
         cx.notify();
     }
 
