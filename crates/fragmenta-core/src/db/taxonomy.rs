@@ -167,6 +167,33 @@ impl Db {
         Ok(())
     }
 
+    /// 设置分类颜色：`Some("#RRGGBB")` 设色、`None` 恢复未选色（中性）；
+    /// 条目不存在报错。
+    pub fn set_category_color(&self, name: &str, color: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE categories SET color = ?1 WHERE name = ?2",
+            params![color, name],
+        )?;
+        if changed == 0 {
+            return Err(DbError::CategoryNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
+    /// 设置标签颜色：语义同 [`Db::set_category_color`]。
+    pub fn set_tag_color(&self, name: &str, color: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE tags SET color = ?1 WHERE name = ?2",
+            params![color, name],
+        )?;
+        if changed == 0 {
+            return Err(DbError::TagNotFound(name.to_string()));
+        }
+        Ok(())
+    }
+
     /// 重命名标签；笔记挂载经外键自动跟随。源不存在报错，目标重名报错。
     pub fn rename_tag(&self, from: &str, to: &str) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();

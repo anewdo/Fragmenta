@@ -72,6 +72,25 @@ impl TaxonomyState {
         result
     }
 
+    /// 设置实体颜色：`Some("#RRGGBB")` 设色、`None` 恢复中性；成功后广播
+    /// `Changed`（管理页列表、笔记卡片徽片与分类标签表单各自重拉颜色）。
+    pub(crate) fn set_color(
+        &mut self,
+        kind: TaxonomyKind,
+        name: &str,
+        color: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> DbResult<()> {
+        let result = match kind {
+            TaxonomyKind::Category => self.db.set_category_color(name, color),
+            TaxonomyKind::Tag => self.db.set_tag_color(name, color),
+        };
+        if result.is_ok() {
+            cx.emit(TaxonomyEvent::Changed);
+        }
+        result
+    }
+
     /// 删除实体（分类置空归属 / 标签摘除挂载由数据层完成）；成功后广播 `Changed`。
     pub(crate) fn delete(
         &mut self,

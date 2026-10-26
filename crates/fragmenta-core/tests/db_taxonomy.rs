@@ -293,3 +293,77 @@ fn rename_category_moves_mounts_and_reports_errors() {
     assert_eq!(notes[0].category.as_deref(), Some("事务"));
     assert_eq!(db.categories().unwrap(), ["事务", "生活"]);
 }
+
+/// 设色 / 置空：颜色落库并经条目查询与名称映射读回；重开 Db 颜色不变、
+/// 重命名后颜色保留；置 None 恢复未选色；条目不存在报错。
+#[test]
+fn set_color_and_clear_persist_across_reopen() {
+    let dir = TempDir::new("db-taxonomy-set-color");
+    let db_path = dir.path().join("set-color.db");
+    let db = Db::open(&db_path).unwrap();
+
+    db.create_category("工作").unwrap();
+    db.create_tag("急").unwrap();
+
+    // 设色：条目查询与名称→颜色映射一致读回
+    db.set_category_color("工作", Some("#2196F3")).unwrap();
+    db.set_tag_color("急", Some("#F44336")).unwrap();
+    let assert_colors = |db: &Db| {
+        let work = db
+            .categories_with_usage()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name == "工作")
+            .unwrap();
+        assert_eq!(work.color.as_deref(), Some("#2196F3"));
+        assert_eq!(
+            db.category_colors().unwrap().get("工作").cloned().flatten(),
+            Some(String::from("#2196F3"))
+        );
+        let urgent = db
+            .tags_with_usage()
+            .unwrap()
+            .into_iter()
+            .find(|t| t.name == "急")
+            .unwrap();
+        assert_eq!(urgent.color.as_deref(), Some("#F44336"));
+        assert_eq!(
+            db.tag_colors().unwrap().get("急").cloned().flatten(),
+            Some(String::from("#F44336"))
+        );
+    };
+    assert_colors(&db);
+
+    // 持久性：重开 Db 颜色不变；重命名后颜色随实体保留
+    drop(db);
+    let db = Db::open(&db_path).unwrap();
+    assert_colors(&db);
+    db.rename_category("工作", "事务").unwrap();
+    db.rename_tag("急", "紧急").unwrap();
+    let categories = db.categories_with_usage().unwrap();
+    let work = categories.iter().find(|c| c.name == "事务").unwrap();
+    assert_eq!(work.color.as_deref(), Some("#2196F3"));
+    let tags = db.tags_with_usage().unwrap();
+    let urgent = tags.iter().find(|t| t.name == "紧急").unwrap();
+    assert_eq!(urgent.color.as_deref(), Some("#F44336"));
+
+    // 置空：恢复未选色
+    db.set_category_color("事务", None).unwrap();
+    db.set_tag_color("紧急", None).unwrap();
+    assert_eq!(db.category_colors().unwrap().get("事务"), Some(&None));
+    assert_eq!(db.tag_colors().unwrap().get("紧急"), Some(&None));
+
+    // 条目不存在报错（设色与置空同路径）
+    assert!(matches!(
+        db.set_category_color("不存在", Some("#2196F3")).unwrap_err(),
+        DbError::CategoryNotFound(_)
+    ));
+    assert!(matches!(
+        db.set_tag_color("不存在", Some("#F44336")).unwrap_err(),
+        DbError::TagNotFound(_)
+    ));
+    assert!(matches!(
+        db.set_category_color("不存在", None).unwrap_err(),
+        DbError::CategoryNotFound(_)
+    ));
+}

@@ -7,7 +7,7 @@
 //! - 未选色的条目以主题中性样式渲染；
 //! - 任意取色器（ticket 03）产出的颜色同样以 `#RRGGBB` 落库。
 
-use gpui_kit::{Hsla, rgb};
+use gpui_kit::{Hsla, Rgba, rgb};
 
 /// 色盘色的填充 Tag 前景（白）：色盘统一 500 亮度档，白字深 / 浅主题下均可读。
 pub(crate) fn filled_foreground() -> Hsla {
@@ -15,8 +15,7 @@ pub(crate) fn filled_foreground() -> Hsla {
 }
 
 /// 6 色 Material Design 取色盘：六个不同 hue 家族、同一 500 亮度档。
-/// 分类 / 标签选色 Popover 的内置色来源（taxonomy-pages 后续 ticket 接入）。
-#[allow(dead_code)]
+/// 分类 / 标签选色 Popover 的内置色来源。
 pub(crate) fn palette_colors() -> [Hsla; 6] {
     [
         rgb(0xF44336).into(), // Red 500
@@ -38,6 +37,19 @@ pub fn parse_hex_color(s: &str) -> Option<Hsla> {
     Some(rgb(value).into())
 }
 
+/// Hsla → `#RRGGBB`（落库格式）：透明度丢弃，统一按不透明存储，
+/// 与 [`parse_hex_color`] 的读回格式对齐。
+pub(crate) fn format_hex_color(color: Hsla) -> String {
+    let rgba = Rgba::from(Hsla { a: 1., ..color });
+    let channel = |value: f32| (value * 255.).round() as u32;
+    format!(
+        "#{:02X}{:02X}{:02X}",
+        channel(rgba.r),
+        channel(rgba.g),
+        channel(rgba.b)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +68,20 @@ mod tests {
         assert_eq!(parse_hex_color("#1234567"), None);
         assert_eq!(parse_hex_color("#GGGGGG"), None);
         assert_eq!(parse_hex_color("#2196F3 "), None);
+    }
+
+    #[test]
+    fn formats_opaque_rrggbb_and_round_trips() {
+        assert_eq!(format_hex_color(parse_hex_color("#2196F3").unwrap()), "#2196F3");
+        assert_eq!(
+            format_hex_color(parse_hex_color("#F44336").unwrap()),
+            "#F44336"
+        );
+        // 透明度统一丢弃：任意取色器产出按不透明落库
+        let translucent = Hsla {
+            a: 0.4,
+            ..parse_hex_color("#FF0000").unwrap()
+        };
+        assert_eq!(format_hex_color(translucent), "#FF0000");
     }
 }
