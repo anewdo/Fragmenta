@@ -225,7 +225,11 @@ impl Render for NoteEditor {
         };
         // 内容阅读面：源文 / 预览正文随编辑器字号缩放
         let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
-        let editor_source_width = cx.global::<SettingsStore>().0.read(cx).editor_source_width();
+        let editor_source_width = cx
+            .global::<SettingsStore>()
+            .0
+            .read(cx)
+            .editor_source_width();
         let split_state = self.split_state.clone();
 
         // 空态：未选中笔记

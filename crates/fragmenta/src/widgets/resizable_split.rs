@@ -7,9 +7,7 @@ use std::ops::Range;
 
 use gpui_kit::component::{ResizableState, h_resizable, resizable_panel};
 use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyElement, App, ElementId, Entity, IntoElement, Pixels, RenderOnce, Window,
-};
+use gpui_kit::{AnyElement, App, ElementId, Entity, IntoElement, Pixels, RenderOnce, Window};
 use std::rc::Rc;
 
 /// 水平双栏分栏：拖动分界线调整左栏宽度。
@@ -68,7 +66,9 @@ impl RenderOnce for ResizableSplit {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
         h_resizable(self.id)
             .when_some(self.state.as_ref(), |group, state| group.with_state(state))
-            .when_some(self.on_resize, |group, callback| group.on_resize(move |state, window, cx| callback(state, window, cx)))
+            .when_some(self.on_resize, |group, callback| {
+                group.on_resize(move |state, window, cx| callback(state, window, cx))
+            })
             .child(
                 resizable_panel()
                     .when_some(self.left_size, |panel, size| panel.size(size))

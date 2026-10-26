@@ -72,7 +72,10 @@ mod tests {
 
     #[test]
     fn formats_opaque_rrggbb_and_round_trips() {
-        assert_eq!(format_hex_color(parse_hex_color("#2196F3").unwrap()), "#2196F3");
+        assert_eq!(
+            format_hex_color(parse_hex_color("#2196F3").unwrap()),
+            "#2196F3"
+        );
         assert_eq!(
             format_hex_color(parse_hex_color("#F44336").unwrap()),
             "#F44336"

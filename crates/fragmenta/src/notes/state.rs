@@ -157,17 +157,22 @@ impl NotesState {
     }
 
     /// 设置笔记分类（唯一、可清除、新分类自动建立）；成功后广播 `Changed`。
-    pub fn set_category(&mut self, id: i64, category: Option<&str>, cx: &mut Context<Self>) {
-        if self.db.set_note_category(id, category).is_ok() {
-            cx.emit(NotesEvent::Changed);
-        }
+    pub fn set_category(
+        &mut self,
+        id: i64,
+        category: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> DbResult<()> {
+        self.db.set_note_category(id, category)?;
+        cx.emit(NotesEvent::Changed);
+        Ok(())
     }
 
     /// 全量替换笔记标签（入参先经 `normalize_tags` 规范化）；成功后广播 `Changed`。
-    pub fn set_tags(&mut self, id: i64, tags: Vec<String>, cx: &mut Context<Self>) {
-        if self.db.set_note_tags(id, &tags).is_ok() {
-            cx.emit(NotesEvent::Changed);
-        }
+    pub fn set_tags(&mut self, id: i64, tags: Vec<String>, cx: &mut Context<Self>) -> DbResult<()> {
+        self.db.set_note_tags(id, &tags)?;
+        cx.emit(NotesEvent::Changed);
+        Ok(())
     }
 
     /// read-through 直查（D5：本地 SQLite 亚毫秒查询，无缓存）。

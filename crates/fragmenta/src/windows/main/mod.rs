@@ -223,11 +223,7 @@ impl MainShell {
             })
             .child(Icon::new(icon).size_5())
             .when(!collapsed, |this| {
-                this.child(
-                    div()
-                        .text_role(TextRole::ControlLabel)
-                        .child(label),
-                )
+                this.child(div().text_role(TextRole::ControlLabel).child(label))
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.page = page;
@@ -402,11 +398,7 @@ impl Render for MainShell {
                     .items_center()
                     .gap(tokens::spacing::SM)
                     .child(Icon::new(IconName::Layers))
-                    .child(
-                        div()
-                            .text_role(TextRole::ControlLabel)
-                            .child("Fragmenta"),
-                    ),
+                    .child(div().text_role(TextRole::ControlLabel).child("Fragmenta")),
                 window,
                 cx,
             ))

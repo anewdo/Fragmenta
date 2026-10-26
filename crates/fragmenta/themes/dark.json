@@ -5,7 +5,11 @@
       "name": "Fragmenta Dark",
       "mode": "dark",
       "shadow": true,
-      "colors": {}
+      "colors": {
+        "list.active.border": "#4CC2FF",
+        "list.active.background": "#4CC2FF1F",
+        "list.hover.background": "#303030"
+      }
     }
   ]
 }

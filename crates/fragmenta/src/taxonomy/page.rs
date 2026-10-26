@@ -17,7 +17,9 @@ use gpui_kit::component::popover::{Popover, PopoverState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::separator::Separator;
 use gpui_kit::component::slider::{Slider, SliderState};
-use gpui_kit::component::{ActiveTheme as _, Colorize as _, Icon, Selectable, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Colorize as _, Icon, Selectable, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -238,12 +240,15 @@ impl TaxonomyPage {
             state.sync_pending_value(window, cx);
             state
         });
-        let sub =
-            cx.subscribe_in(&picker, window, move |this, _, event: &ColorPickerEvent, window, cx| {
+        let sub = cx.subscribe_in(
+            &picker,
+            window,
+            move |this, _, event: &ColorPickerEvent, window, cx| {
                 if let ColorPickerEvent::Change(Some(color)) = event {
                     this.commit_custom_color(id, *color, window, cx);
                 }
-            });
+            },
+        );
         self.color_popover = Some(ColorSession {
             id,
             picker,
@@ -254,7 +259,11 @@ impl TaxonomyPage {
 
     /// 关闭选色弹层并释放会话（受控 open 的程序性关闭不再回调本方法）。
     fn close_color_popover(&mut self, id: i64, cx: &mut Context<Self>) {
-        if self.color_popover.take_if(|session| session.id == id).is_some() {
+        if self
+            .color_popover
+            .take_if(|session| session.id == id)
+            .is_some()
+        {
             cx.notify();
         }
     }
@@ -440,7 +449,10 @@ impl TaxonomyPage {
     ) -> AnyElement {
         let dot_color = entry.color.as_deref().and_then(parse_hex_color);
         let mut color_popover = Popover::new(("taxonomy-color", entry.id as u64))
-            .trigger(ColorDotTrigger::new(("taxonomy-color-dot", entry.id as u64), dot_color))
+            .trigger(ColorDotTrigger::new(
+                ("taxonomy-color-dot", entry.id as u64),
+                dot_color,
+            ))
             .open(
                 self.color_popover
                     .as_ref()
@@ -660,8 +672,9 @@ fn color_popover_content(
         .cursor_pointer()
         .hover(|style| style.bg(theme.secondary))
         .on_click(move |_, window, cx| {
-            let _ =
-                weak_none.update(cx, |this, cx| this.commit_palette_color(id, None, window, cx));
+            let _ = weak_none.update(cx, |this, cx| {
+                this.commit_palette_color(id, None, window, cx)
+            });
         })
         .child(
             div()
@@ -677,32 +690,34 @@ fn color_popover_content(
         .child(div().text_role(TextRole::ControlLabel).child("无色"));
 
     // 内置 6 色 Material 色板
-    let swatch_row = h_flex().flex_wrap().gap_2().children(
-        palette_colors().iter().enumerate().map(|(ix, color)| {
-            let hex = format_hex_color(*color);
-            let selected = current_hex.as_deref() == Some(hex.as_str());
-            let weak_swatch = weak.clone();
-            div()
-                .id(("taxonomy-swatch", ix))
-                .size(SWATCH)
-                .rounded(tokens::radius::SM)
-                .bg(*color)
-                .border_1()
-                .border_color(if selected {
-                    theme.ring
-                } else {
-                    color.darken(0.25)
-                })
-                .when(selected, |this| this.border_2())
-                .cursor_pointer()
-                .hover(|style| style.border_color(color.darken(0.5)))
-                .on_click(move |_, window, cx| {
-                    let _ = weak_swatch.update(cx, |this, cx| {
-                        this.commit_palette_color(id, Some(&hex), window, cx)
-                    });
-                })
-        }),
-    );
+    let swatch_row =
+        h_flex()
+            .flex_wrap()
+            .gap_2()
+            .children(palette_colors().iter().enumerate().map(|(ix, color)| {
+                let hex = format_hex_color(*color);
+                let selected = current_hex.as_deref() == Some(hex.as_str());
+                let weak_swatch = weak.clone();
+                div()
+                    .id(("taxonomy-swatch", ix))
+                    .size(SWATCH)
+                    .rounded(tokens::radius::SM)
+                    .bg(*color)
+                    .border_1()
+                    .border_color(if selected {
+                        theme.ring
+                    } else {
+                        color.darken(0.25)
+                    })
+                    .when(selected, |this| this.border_2())
+                    .cursor_pointer()
+                    .hover(|style| style.border_color(color.darken(0.5)))
+                    .on_click(move |_, window, cx| {
+                        let _ = weak_swatch.update(cx, |this, cx| {
+                            this.commit_palette_color(id, Some(&hex), window, cx)
+                        });
+                    })
+            }));
 
     // 自定义任意取色：hex 输入 + H/S/L 滑杆（kit ColorPickerState 的状态机）
     let picker_state = picker.read(cx);
@@ -719,12 +734,10 @@ fn color_popover_content(
         .h_2_5()
         .overflow_hidden()
         .children((0..HUE_STEPS).map(|ix| {
-            div().flex_1().h_full().bg(hsla(
-                ix as f32 / HUE_STEPS as f32,
-                1.,
-                0.5,
-                1.,
-            ))
+            div()
+                .flex_1()
+                .h_full()
+                .bg(hsla(ix as f32 / HUE_STEPS as f32, 1., 0.5, 1.))
         }));
     let saturation_track = gradient_track(
         hsla(slider_color.h, 0., slider_color.l, 1.),
@@ -749,12 +762,7 @@ fn color_popover_content(
                 .gap_2()
                 .child(div().text_role(TextRole::Meta).child("自定义"))
                 .child(Input::new(&hex_input).small().w_full())
-                .child(color_slider(
-                    "色相",
-                    sliders.hue(),
-                    hue_track,
-                    &theme,
-                ))
+                .child(color_slider("色相", sliders.hue(), hue_track, &theme))
                 .child(color_slider(
                     "饱和",
                     sliders.saturation(),
@@ -847,18 +855,19 @@ mod tests {
     fn color_popover_commits_palette_none_and_custom_colors(cx: &mut TestAppContext) {
         let (handle, page, db) = open_page(cx);
 
-        let id = cx.update_window(handle, |_, window, cx| {
-            page.update(cx, |page, cx| {
-                page.create("工作".into(), window, cx);
-                let id = page.list.as_ref().unwrap()[0].id;
-                // 色板选定：落库 + 弹层关闭
-                page.open_color_popover(id, window, cx);
-                page.commit_palette_color(id, Some("#2196F3"), window, cx);
-                assert!(page.color_popover.is_none());
-                id
+        let id = cx
+            .update_window(handle, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.create("工作".into(), window, cx);
+                    let id = page.list.as_ref().unwrap()[0].id;
+                    // 色板选定：落库 + 弹层关闭
+                    page.open_color_popover(id, window, cx);
+                    page.commit_palette_color(id, Some("#2196F3"), window, cx);
+                    assert!(page.color_popover.is_none());
+                    id
+                })
             })
-        })
-        .unwrap();
+            .unwrap();
         assert_eq!(
             db.category_colors().unwrap().get("工作").cloned().flatten(),
             Some(String::from("#2196F3"))
@@ -872,10 +881,7 @@ mod tests {
             });
         })
         .unwrap();
-        assert_eq!(
-            db.category_colors().unwrap().get("工作"),
-            Some(&None)
-        );
+        assert_eq!(db.category_colors().unwrap().get("工作"), Some(&None));
 
         // 自定义取色：滑杆变更（Change 事件）经订阅即时落库，弹层保持打开
         cx.update_window(handle, |_, window, cx| {

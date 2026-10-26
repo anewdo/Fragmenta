@@ -26,15 +26,8 @@ static TILES: Mutex<Vec<TileEntry>> = Mutex::new(Vec::new());
 pub fn open_new(cx: &mut App) {
     // 打开尺寸取自设置记忆（用户最近一次磁贴调整，默认 360×480）；
     // 手改 settings.json 可能给出低于最小尺寸的值，钳到 window_min_size 同款下限
-    let (tile_w, tile_h) = cx
-        .global::<SettingsStore>()
-        .0
-        .read(cx)
-        .tile_size();
-    let (tile_w, tile_h) = (
-        tile_w.as_f32().max(MIN_W),
-        tile_h.as_f32().max(MIN_H),
-    );
+    let (tile_w, tile_h) = cx.global::<SettingsStore>().0.read(cx).tile_size();
+    let (tile_w, tile_h) = (tile_w.as_f32().max(MIN_W), tile_h.as_f32().max(MIN_H));
 
     let mut tiles = TILES.lock().expect("磁贴登记表锁中毒");
     // 清理已关磁贴；场上清空后下一次呼出自然回到首开定位（§5.8 重置规则）
@@ -141,13 +134,7 @@ fn monitor_containing(cx: &App, p: Point<Pixels>) -> Option<((f32, f32, f32, f32
 
 /// 窗口左上角钳制在显示器内（完整可见；显示器小于窗口时贴左上角）。
 /// `w` / `h` 为本次打开的窗口尺寸（钳制范围随记忆尺寸变化）。
-fn clamp_to_monitor(
-    monitor: (f32, f32, f32, f32),
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-) -> (f32, f32) {
+fn clamp_to_monitor(monitor: (f32, f32, f32, f32), x: f32, y: f32, w: f32, h: f32) -> (f32, f32) {
     let (bx, by, bw, bh) = monitor;
     (
         x.clamp(bx, (bx + bw - w).max(bx)),

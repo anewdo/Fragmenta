@@ -1,9 +1,13 @@
 //! 笔记页视图构建：筛选栏 / 卡片列表 / 空态与错误占位 / render 组装。
 //! 状态与交互逻辑（订阅 / 快照拉取 / 对话框）见 `mod.rs`。
 
+use std::time::Duration;
+
+use chrono::{DateTime, Local};
 use fragmenta_core::model::{Note, SearchScope};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::empty::{
@@ -14,18 +18,44 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{EditorMode, NotesPage};
 use crate::settings::SettingsStore;
+use crate::ui::tokens::{self, TextRole, TextRoleExt};
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
-/// 卡片标签徽片上限：超过仅显示前 3 个 + "+N" 计数。
-const CARD_TAG_LIMIT: usize = 3;
+/// 卡片摘要最多显示行数（超出以省略号截断）。
+const CARD_SUMMARY_LINES: usize = 2;
+/// 选中卡片左侧 Fluent 指示条宽度。
+const CARD_SELECTION_BAR: Pixels = px(3.);
+/// 悬停操作按钮淡入时长。
+const CARD_ACTION_FADE: Duration = Duration::from_millis(120);
+/// 两个 32px 操作按钮及其间距占用的宽度。
+const CARD_ACTIONS_WIDTH: Pixels = px(68.);
+
+/// 创建时间的相对文案：一周内按刚刚 / 分钟 / 小时 / 天，更早显示日期。
+fn relative_created_at(created_at: DateTime<Local>) -> String {
+    relative_at(created_at, Local::now())
+}
+
+fn relative_at(created_at: DateTime<Local>, now: DateTime<Local>) -> String {
+    let seconds = now.signed_duration_since(created_at).num_seconds();
+    if seconds < 60 {
+        "刚刚".to_string()
+    } else if seconds < 60 * 60 {
+        format!("{} 分钟前", seconds / 60)
+    } else if seconds < 60 * 60 * 24 {
+        format!("{} 小时前", seconds / 60 / 60)
+    } else if seconds < 60 * 60 * 24 * 7 {
+        format!("{} 天前", seconds / 60 / 60 / 24)
+    } else {
+        created_at.format("%Y-%m-%d").to_string()
+    }
+}
 
 impl NotesPage {
     /// 页顶操作区：编辑器三模式切换组（渲染于笔记页顶部右侧）。
@@ -180,38 +210,96 @@ impl NotesPage {
             })
     }
 
-    /// 单张笔记卡片：标题行 + 摘要 + 分类 / 标签徽片 + 分类标签表单弹层 + 删除确认。
+    /// 单张笔记卡片（Fluent）：选中指示条 + 材质背景 + 悬停淡入操作。
     ///
-    /// 点击卡片任意处 = 选中载入编辑器（正打开的卡片描边高亮）。
-    #[allow(clippy::too_many_arguments)]
+    /// 头部标题（单行截断）与右上分类；中部多行截断摘要；底部左侧平铺
+    /// 标签、右侧相对创建时间。点击卡片任意处 = 选中载入编辑器。
     fn note_card(
         &self,
         note: &Note,
         selected: bool,
         weak: &WeakEntity<Self>,
-        card_bg: Hsla,
-        border: Hsla,
-        muted: Hsla,
-        accent: Hsla,
+        content_px: Pixels,
+        cx: &App,
     ) -> Stateful<Div> {
         let note_id = note.id;
+        let hovered = self.hovered_note == Some(note_id);
         let title = if note.title.is_empty() {
             "无标题".to_string()
         } else {
             note.title.clone()
         };
         let summary = note.summary();
-        let created = note.created_at.format("%Y-%m-%d %H:%M").to_string();
-        let extra_tags = note.tags.len().saturating_sub(CARD_TAG_LIMIT);
+        let created = relative_created_at(note.created_at);
+        let theme = cx.theme();
+        // 卡片材质取主题 secondary（可携带主题 JSON 的渐变），悬停 / 选中
+        // 背景与指示条颜色均来自主题角色，随 Light / Dark 各自维护。
+        let surface: Background = theme.tokens.secondary.background;
+        let selected_bg = Background::from(theme.list_active);
+        let (hover_bg, border, selection, muted) = (
+            theme.list_hover,
+            theme.border,
+            theme.list_active_border,
+            theme.muted_foreground,
+        );
+
+        let action = |id: &'static str, icon: IconName, tooltip: &'static str| {
+            Button::new((id, note_id as u64))
+                .ghost()
+                .compact()
+                .w(tokens::heights::CONTROL)
+                .h(tokens::heights::CONTROL)
+                .icon(icon)
+                .tooltip(tooltip)
+        };
+
+        let taxonomy = action("note-taxonomy", IconName::SquarePen, "分类与标签").on_click({
+            let weak = weak.clone();
+            let note = note.clone();
+            move |_, window, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.open_taxonomy_dialog(note.clone(), window, cx)
+                });
+            }
+        });
+        let delete = action("note-delete", IconName::Trash, "删除").on_click({
+            let weak = weak.clone();
+            move |_, window, cx| {
+                let _ = weak.update(cx, |this, cx| this.confirm_delete(note_id, window, cx));
+            }
+        });
+
+        let actions = EffectTransition::new(CARD_ACTION_FADE)
+            .ease(ease_out_cubic)
+            .fade(0., 1.)
+            .apply(
+                h_flex()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .items_center()
+                    .gap_1()
+                    .w(CARD_ACTIONS_WIDTH)
+                    .child(taxonomy)
+                    .child(delete),
+                format!("note-card-actions-{note_id}-{}", self.hover_seq),
+            )
+            .into_any_element();
 
         v_flex()
             .id(("note-card", note_id as u64))
-            .gap_1p5()
-            .p_3()
-            .rounded(px(6.))
-            .bg(card_bg)
+            .relative()
+            .gap_2()
+            .p(tokens::spacing::MD)
+            .rounded(tokens::radius::SM)
+            .bg(if selected { selected_bg } else { surface })
             .border_1()
-            .border_color(if selected { accent } else { border })
+            .border_color(if selected {
+                selection.opacity(0.35)
+            } else {
+                border
+            })
             .cursor_pointer()
             .on_click({
                 let weak = weak.clone();
@@ -221,98 +309,126 @@ impl NotesPage {
                     });
                 }
             })
-            .hover(move |style| style.border_color(accent))
-            // 标题行：标题 + 创建时间 + 分类标签表单 + 删除
+            .on_hover({
+                let weak = weak.clone();
+                move |hovered, _, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if *hovered {
+                            if this.hovered_note != Some(note_id) {
+                                this.hovered_note = Some(note_id);
+                                this.hover_seq = this.hover_seq.wrapping_add(1);
+                                cx.notify();
+                            }
+                        } else if this.hovered_note == Some(note_id) {
+                            this.hovered_note = None;
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .when(!selected, |el| el.hover(move |style| style.bg(hover_bg)))
+            // 选中指示条：Fluent 左侧 3px Accent 色条（颜色随主题定义）
+            .when(selected, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(tokens::spacing::SM)
+                        .bottom(tokens::spacing::SM)
+                        .w(CARD_SELECTION_BAR)
+                        .rounded_full()
+                        .bg(selection),
+                )
+            })
+            // 头部：标题（截断）+ 分类（右上角）；悬停操作绝对定位于分类
+            // 之上，不参与布局，避免悬停时卡片高度与标题宽度跳动。
             .child(
                 h_flex()
+                    .relative()
                     .items_center()
                     .gap_2()
+                    .min_h(tokens::heights::CONTROL)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
-                            .font_weight(FontWeight::BOLD)
                             .truncate()
+                            .text_role_sized(TextRole::DocumentTitle, content_px)
                             .child(title),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(11.))
-                            .text_color(muted)
-                            .child(created),
-                    )
-                    .child(self.taxonomy_popover(note, weak))
-                    .child(
-                        Button::new(("note-delete", note_id as u64))
-                            .ghost()
-                            .compact()
-                            .xsmall()
-                            .icon(IconName::Trash)
-                            .on_click({
-                                let weak = weak.clone();
-                                move |_, window, cx| {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        this.confirm_delete(note_id, window, cx)
-                                    });
-                                }
+                            .min_w(CARD_ACTIONS_WIDTH)
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .when(hovered, |el| el.invisible())
+                            .when_some(note.category.clone(), |el, cat| {
+                                let color = self.category_colors.get(&cat).copied().flatten();
+                                el.child(CategoryTag::new(cat).color(color))
                             }),
-                    ),
+                    )
+                    .when(hovered, |el| el.child(actions)),
             )
-            // 摘要（空正文时省略该行）
+            // 中部：摘要（多行截断；空正文时省略）
             .when(!summary.is_empty(), |el| {
                 el.child(
                     div()
-                        .text_size(px(12.))
+                        .w_full()
+                        .text_role_sized(TextRole::Reading, content_px)
                         .text_color(muted)
-                        .truncate()
+                        .line_clamp(CARD_SUMMARY_LINES)
                         .child(summary),
                 )
             })
-            // 分类 + 标签徽片（≤3 个，超出以 "+N" 计数）
-            .when(note.category.is_some() || !note.tags.is_empty(), |el| {
-                el.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap_1()
-                        .when_some(note.category.clone(), |el, cat| {
-                            let color = self.category_colors.get(&cat).copied().flatten();
-                            el.child(CategoryTag::new(cat).color(color))
-                        })
-                        .children(
-                            note.tags
-                                .iter()
-                                .take(CARD_TAG_LIMIT)
-                                .map(|tag| {
-                                    TagBadge::new(tag.clone())
-                                        .color(self.tag_colors.get(tag).copied().flatten())
-                                }),
-                        )
-                        .when(extra_tags > 0, |el| {
-                            el.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(muted)
-                                    .child(format!("+{extra_tags}")),
-                            )
+            // 底部：左侧平铺标签 + 右侧相对创建时间
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(h_flex().flex_1().min_w_0().flex_wrap().gap_1().children(
+                        note.tags.iter().map(|tag| {
+                            TagBadge::new(tag.clone())
+                                .color(self.tag_colors.get(tag).copied().flatten())
                         }),
-                )
-            })
+                    ))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_role(TextRole::Meta)
+                            .text_color(muted)
+                            .child(created),
+                    ),
+            )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative_at;
+    use chrono::{Duration, Local};
+
+    #[test]
+    fn relative_time_uses_readable_buckets() {
+        let now = Local::now();
+        assert_eq!(relative_at(now - Duration::seconds(5), now), "刚刚");
+        assert_eq!(relative_at(now - Duration::minutes(5), now), "5 分钟前");
+        assert_eq!(relative_at(now - Duration::hours(3), now), "3 小时前");
+        assert_eq!(relative_at(now - Duration::days(3), now), "3 天前");
+        let old = now - Duration::days(30);
+        assert_eq!(relative_at(old, now), old.format("%Y-%m-%d").to_string());
     }
 }
 
 impl Render for NotesPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
-        let (card_bg, border, muted, accent, danger) = {
+        let (border, muted, danger) = {
             let theme = cx.theme();
-            (
-                theme.secondary,
-                theme.border,
-                theme.muted_foreground,
-                theme.accent,
-                theme.danger,
-            )
+            (theme.border, theme.muted_foreground, theme.danger)
         };
         // 内容阅读面：列表标题 / 摘要随编辑器字号缩放（辅助小字保持固定）
         let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
@@ -449,7 +565,7 @@ impl Render for NotesPage {
                 .text_size(content_px)
                 .children(notes.iter().map(|note| {
                     let selected = self.selected == Some(note.id);
-                    self.note_card(note, selected, &weak, card_bg, border, muted, accent)
+                    self.note_card(note, selected, &weak, content_px, cx)
                 }))
                 .into_any_element(),
         };
