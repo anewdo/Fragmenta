@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 fragmenta-core = { path = "../fragmenta-core" }
-gpui-kit = "0.8.0"
+gpui-kit = "=0.8.1"
 global-hotkey = "0.8.0"
 tray-icon = "0.26.1"
 raw-window-handle = "0.6"
@@ -27,4 +27,4 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 # headless 测试（#[gpui_kit::test]）需要 test-support feature
-gpui-kit = { version = "0.8.0", features = ["test-support"] }
+gpui-kit = { version = "=0.8.1", features = ["test-support"] }

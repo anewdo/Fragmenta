@@ -21,8 +21,8 @@
 
 - **首页**：内容待定（原"月历 + 选中日待办"方案随 Phase 12 废弃，占位页维持现状）
 - **笔记**：两栏布局、分界线可拖动
-  - 左栏：搜索筛选（标题 / 全文 / 分类 / 标签）+ 笔记卡片列表（标题、创建时间、摘要、分类、标签最多 3 个；右键菜单设置分类与标签，分类唯一、标签可多；卡片右端垃圾桶图标删除，带确认）
-  - 右栏：Markdown 编辑器（Source / Preview / Split 三模式），支持图片
+  - 左栏：顶部搜索（标题 + 正文）与高级筛选（分类 / 标签多选）；其下排序（更新时间 / 创建时间 / 名称）与「新增笔记」按钮 + 笔记卡片列表（标题、创建时间、摘要、分类、标签最多 3 个；右键菜单设置分类与标签，分类唯一、标签可多；卡片右端垃圾桶图标删除，带确认）
+  - 右栏：Markdown 编辑器（Source / Preview / Split 三模式，切换组独占编辑器顶部一行），支持图片
 - **待办**：左侧月历选日（初始选中今日）+ 右侧选中日清单；标题行提供「今天」跳回与「新建」；新建 / 编辑共用 Dialog 表单（内容必填，可选「指定时间区间」，`end <= start` 拒绝、不支持跨天）；圆形 check 勾选完成（完成后内容与区间均加删除线）；hover 出编辑 / 删除按钮（删除无确认）；选中日无待办时空态提示
 - **设置**（四组）：
   - 外观：主题（Light / Dark / Auto，ADR-0009）、字号三档
@@ -122,7 +122,7 @@ flowchart TB
 
 ### 5.1 core::model
 
-纯数据类型与派生逻辑：`Note`、`Todo`、`NoteFilter`、`DayActivity`；`Note::summary()`（回车替换为空格，截取前 50 字符）、标签规范化（去空白、去重）。零副作用，单测友好。
+纯数据类型与派生逻辑：`Note`、`Todo`、`NoteFilter`、`DayActivity`；`Note::summary()`（回车替换为空格，显示层按容器宽度省略）、标签规范化（去空白、去重）。零副作用，单测友好。
 
 ### 5.2 core::db
 
@@ -139,7 +139,7 @@ impl Db {
     // 笔记
     pub fn upsert_note(&self, note: &mut Note) -> Result<()>;   // 回填 id / 时间戳
     pub fn delete_note(&self, id: i64) -> Result<()>;
-    pub fn notes(&self, filter: &NoteFilter) -> Result<Vec<Note>>;  // 标题/全文 LIKE + 分类 + 标签
+    pub fn notes(&self, filter: &NoteFilter) -> Result<Vec<Note>>;  // 标题/正文 LIKE + 分类（多选，任一命中）+ 标签 + 排序
     // 待办
     pub fn upsert_todo(&self, todo: &mut Todo) -> Result<()>;
     pub fn delete_todo(&self, id: i64) -> Result<()>;
@@ -281,7 +281,7 @@ impl HotkeyController {
 ### 5.8 windows
 
 - `main::open(cx)`：单例幂等，已开则激活；`MainShell` 持 `Page` 枚举路由，各页 Entity 常驻（切换保留筛选与滚动状态）；侧栏用 kit `Sidebar::collapsible(true)`
-- 笔记页通过 `NotesPage::header_actions` 提供标题栏操作区，`MainShell` 持有笔记页观察句柄，模式切换后刷新选中态；按钮实现与编辑模式类型归笔记功能内部。
+- 笔记页编辑器在顶部独立一行承载 Source / Preview / Split 三模式切换组，未选中笔记时整组禁用；按钮实现与编辑模式类型归笔记功能内部。
 - 主窗口关闭语义：`close_to_quit` 关（默认）→ 进程不退，托盘驻留（§5.11），再开走 `main::open` 重开；开 → 走 §5.6 统一退出流程，保存失败时保留主窗口供用户选择
 - `tile::open_new(cx)`：每次新窗口；`WindowKind::PopUp` + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为——首开磁贴中心对准光标（空间不足时钳制完整可见）；场上已有磁贴时取创建时机最新的现存磁贴的**当前实际位置**（登记表存 `AnyWindowHandle`，经 `update` 取 `window.bounds()`，磁贴被挪动后新磁贴跟随其现位置）级联偏移 26 逻辑像素，并经 `cx.displays()` 反查其中心点所在显示器做钳制；场上磁贴全部关闭后重置为首开行为；定位须绑定 `display_id`（坐标语义见 §9 条目 5）
 - `tile::TileView`：顶栏中间不含交互元素的区域为拖拽移动区；标题与正文共处同一输入区（仅一条分隔线，与弹窗边缘零外距）；窗口尺寸经八向边缘热区拖拽调整（下限 240×280 逻辑像素——gpui 无无边框窗口的边缘 resize API，热区按下记录起始快照，`canvas` 的 paint 钩子每帧注册窗口级 mouse 流，从快照全量计算目标后经 Win32 `SetWindowPos` 物理像素通道一次到位，左 / 上向边缘锚定拖拽前的对侧缘）；圆角窗口区域按实际尺寸设置，并在窗口 bounds 变化时重设（`observe_window_bounds`）；关闭语义——空草稿直接丢弃，非空草稿先 `flush_now` 同步保存再关闭（草稿可弃，已落库不删）
