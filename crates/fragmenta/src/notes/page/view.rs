@@ -4,12 +4,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
-use fragmenta_core::model::{Note, SearchScope};
+use fragmenta_core::model::{Note, NoteSort};
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::FocusableExt as _;
 use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
-use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
@@ -17,25 +17,31 @@ use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable, Sizable, Size, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable, Sizable, Size, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{EditorMode, NotesPage};
+use super::NotesPage;
 use crate::settings::SettingsStore;
-use crate::ui::tokens::{self, TextRole, TextRoleExt};
+use crate::ui::tokens::{self, TextRole};
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
 /// 卡片摘要最多显示行数（超出以省略号截断）。
 const CARD_SUMMARY_LINES: usize = 2;
+/// 卡片标题字号（固定，不随编辑器字号变化）。
+const CARD_TITLE_FONT: Pixels = px(13.);
+/// 卡片摘要字号（固定，不随编辑器字号变化）。
+const CARD_SUMMARY_FONT: Pixels = px(11.);
+/// 卡片元信息（相对时间）字号。
+const CARD_META_FONT: Pixels = px(11.);
 /// 选中卡片左侧 Fluent 指示条宽度。
 const CARD_SELECTION_BAR: Pixels = px(3.);
 /// 悬停操作按钮淡入时长。
 const CARD_ACTION_FADE: Duration = Duration::from_millis(120);
 /// 两个 32px 操作按钮及其间距占用的宽度。
 const CARD_ACTIONS_WIDTH: Pixels = px(68.);
+/// 搜索框聚焦描边不透明度：替代 kit 的 3px 焦点环，避免粗重阴影感。
+const SEARCH_FOCUS_BORDER_OPACITY: f32 = 0.6;
 
 /// 创建时间的相对文案：一周内按刚刚 / 分钟 / 小时 / 天，更早显示日期。
 fn relative_created_at(created_at: DateTime<Local>) -> String {
@@ -58,156 +64,74 @@ fn relative_at(created_at: DateTime<Local>, now: DateTime<Local>) -> String {
 }
 
 impl NotesPage {
-    /// 页顶操作区：编辑器三模式切换组（渲染于笔记页顶部右侧）。
-    ///
-    /// 未选中笔记时整组禁用：编辑器空态占位与模式无关，可点的模式按钮
-    /// 会读成"点了没反应"；灰置直到选中卡片才可切。
-    fn editor_mode_group(&self, cx: &Context<Self>) -> AnyElement {
-        let mode = self.editor.read(cx).mode();
-        let disabled = self.selected.is_none();
-        let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
-            Button::new(id)
-                .ghost()
-                .small()
-                .compact()
-                .icon(icon)
-                .label(label)
-                .selected(mode == target)
-                .disabled(disabled)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.editor
-                        .update(cx, |editor, cx| editor.set_mode(target, cx));
-                    cx.notify();
-                }))
-        };
-        h_flex()
-            .items_center()
-            .gap_0p5()
-            .p(px(1.))
-            .border_1()
-            .border_color(cx.theme().border)
-            .rounded(px(4.))
-            .child(button(
-                "editor-mode-source",
-                "源码",
-                IconName::PenLine,
-                EditorMode::Source,
-            ))
-            .child(button(
-                "editor-mode-preview",
-                "预览",
-                IconName::Eye,
-                EditorMode::Preview,
-            ))
-            .child(button(
-                "editor-mode-split",
-                "分屏",
-                IconName::Columns2,
-                EditorMode::Split,
-            ))
-            .into_any_element()
-    }
-
-    /// 分类筛选按钮 + 下拉：全部分类 + 各分类（单选可清）+ 重命名入口（选中时）。
-    fn category_filter_button(&self, weak: &WeakEntity<Self>) -> AnyElement {
+    /// 排序下拉：按更新时间 / 按创建时间 / 按名称。
+    fn sort_menu(&self, weak: &WeakEntity<Self>) -> AnyElement {
+        const OPTIONS: [(NoteSort, &str); 3] = [
+            (NoteSort::UpdatedAt, "按更新时间"),
+            (NoteSort::CreatedAt, "按创建时间"),
+            (NoteSort::Title, "按名称"),
+        ];
+        let current = self.sort;
+        let label = OPTIONS
+            .iter()
+            .find(|(sort, _)| *sort == current)
+            .map(|(_, label)| *label)
+            .unwrap_or("按更新时间");
         let weak = weak.clone();
-        let current = self.category.clone();
-        let categories = self.categories.clone();
-        Button::new("notes-category-filter")
+        Button::new("notes-sort")
             .outline()
             .small()
-            .icon(IconName::Folder)
-            .label(current.clone().unwrap_or_else(|| "全部分类".into()))
-            .selected(current.is_some())
+            .icon(IconName::ArrowUpDown)
+            .label(label)
             .dropdown_menu(move |mut menu, _, _| {
-                menu = menu.item({
+                for (sort, label) in OPTIONS {
                     let weak = weak.clone();
-                    PopupMenuItem::new("全部分类")
-                        .checked(current.is_none())
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.category = None;
-                                this.refresh(cx);
-                            });
-                        })
-                });
-                for cat in &categories {
-                    let weak = weak.clone();
-                    let cat = cat.clone();
-                    let checked = current.as_deref() == Some(cat.as_str());
-                    menu = menu.item(PopupMenuItem::new(cat.as_str()).checked(checked).on_click(
+                    menu = menu.item(PopupMenuItem::new(label).checked(sort == current).on_click(
                         move |_, _, cx| {
                             let _ = weak.update(cx, |this, cx| {
-                                this.category = Some(cat.clone());
-                                this.refresh(cx);
+                                if this.sort != sort {
+                                    this.sort = sort;
+                                    this.refresh(cx);
+                                }
                             });
                         },
                     ));
-                }
-                if let Some(from) = &current {
-                    let weak = weak.clone();
-                    let from = from.clone();
-                    menu = menu.separator().item(
-                        PopupMenuItem::new(format!("重命名「{from}」…")).on_click(
-                            move |_, window, cx| {
-                                let _ = weak.update(cx, |this, cx| {
-                                    this.open_rename_category(from.clone(), window, cx)
-                                });
-                            },
-                        ),
-                    );
                 }
                 menu
             })
             .into_any_element()
     }
 
-    /// 标签筛选按钮 + Popover 多选面板（选择即时生效，面板保持打开）。
-    fn tag_filter_popover(&self, weak: &WeakEntity<Self>, muted: Hsla) -> Popover {
-        let weak = weak.clone();
-        let all_tags = self.tags.clone();
-        let selected = self.selected_tags.clone();
-        let label = if selected.is_empty() {
-            "标签".to_string()
-        } else {
-            format!("标签 ·{}", selected.len())
-        };
-        Popover::new("notes-tag-filter")
-            .trigger(
-                Button::new("notes-tag-filter-btn")
-                    .outline()
-                    .small()
-                    .icon(IconName::Tags)
-                    .label(label)
-                    .selected(!selected.is_empty()),
-            )
-            .content(move |_, _, _| {
-                v_flex()
-                    .w(px(200.))
-                    .gap_1()
-                    .p_2()
-                    .children(all_tags.iter().enumerate().map(|(ix, tag)| {
-                        let weak = weak.clone();
-                        let tag = tag.clone();
-                        let checked = selected.contains(&tag);
-                        Checkbox::new(("filter-tag", ix))
-                            .label(tag.as_str())
-                            .checked(checked)
-                            .on_change(move |value, _, cx| {
-                                let _ = weak.update(cx, |this, cx| {
-                                    if *value {
-                                        this.selected_tags.push(tag.clone());
-                                    } else {
-                                        this.selected_tags.retain(|t| t != &tag);
-                                    }
-                                    this.refresh(cx);
-                                });
-                            })
-                    }))
-                    .when(all_tags.is_empty(), |el| {
-                        el.child(div().text_size(px(12.)).text_color(muted).child("暂无标签"))
-                    })
+    /// 筛选 Popover：分类（多选）+ 标签（多选）草稿，点击"完成筛选"才生效；
+    /// 点击面板外关闭时草稿丢弃，恢复为已生效条件。
+    ///
+    /// 触发器是搜索框右侧的滑杆图标，面板按列表内容宽度固定（向下展开），
+    /// 不随左栏拖动变宽。
+    /// 面板内容是独立实体：页面重绘只复用元素，不克隆选项、不重建筛选树。
+    fn filter_popover(&self, weak: &WeakEntity<Self>) -> Popover {
+        let open = self.filter_open;
+        let active_count = self.selected_categories.len() + self.selected_tags.len();
+        let panel = self.filter_panel.clone();
+        let open_weak = weak.clone();
+        Popover::new("notes-filter")
+            .anchor(Anchor::TopRight)
+            .appearance(false)
+            .open(open)
+            .on_open_change(move |is_open, _, cx| {
+                let _ = open_weak.update(cx, |this, cx| {
+                    this.filter_open = *is_open;
+                    this.reset_filter_draft(cx);
+                });
             })
+            .trigger(
+                Button::new("notes-filter-btn")
+                    .ghost()
+                    .small()
+                    .icon(IconName::SlidersHorizontal)
+                    .selected(active_count > 0)
+                    .tooltip("高级筛选"),
+            )
+            .content(move |_, _, _| panel.clone().into_any_element())
     }
 
     /// 单张笔记卡片（Fluent）：选中指示条 + 材质背景 + 悬停淡入操作。
@@ -219,7 +143,6 @@ impl NotesPage {
         note: &Note,
         selected: bool,
         weak: &WeakEntity<Self>,
-        content_px: Pixels,
         cx: &App,
     ) -> Stateful<Div> {
         let note_id = note.id;
@@ -232,11 +155,16 @@ impl NotesPage {
         let summary = note.summary();
         let created = relative_created_at(note.created_at);
         let theme = cx.theme();
-        // 卡片材质取主题 secondary（可携带主题 JSON 的渐变），悬停 / 选中
-        // 背景与指示条颜色均来自主题角色，随 Light / Dark 各自维护。
-        let surface: Background = theme.tokens.secondary.background;
+        // Fluent Light 卡片：白色列表底 + 极浅描边，悬停时描边加深；深色主题
+        // 沿用 secondary 面与常规描边（list 底与页面同色，会失去卡片轮廓）。
+        // 选中底色与左侧指示条保持主题 list_active 配色不变。
+        let (surface, border) = if theme.mode.is_dark() {
+            (theme.tokens.secondary.background, theme.border)
+        } else {
+            (theme.tokens.list.background, theme.border.opacity(0.55))
+        };
         let selected_bg = Background::from(theme.list_active);
-        let (hover_bg, border, selection, muted) = (
+        let (hover_bg, border_hover, selection, muted) = (
             theme.list_hover,
             theme.border,
             theme.list_active_border,
@@ -262,12 +190,24 @@ impl NotesPage {
                 });
             }
         });
-        let delete = action("note-delete", IconName::Trash, "删除").on_click({
-            let weak = weak.clone();
-            move |_, window, cx| {
-                let _ = weak.update(cx, |this, cx| this.confirm_delete(note_id, window, cx));
-            }
-        });
+        let delete = Button::new(("note-delete", note_id as u64))
+            .custom(
+                ButtonCustomVariant::new(cx)
+                    .foreground(theme.danger)
+                    .hover(theme.danger.opacity(0.12))
+                    .active(theme.danger.opacity(0.2)),
+            )
+            .compact()
+            .w(tokens::heights::CONTROL)
+            .h(tokens::heights::CONTROL)
+            .icon(IconName::Trash)
+            .tooltip("删除")
+            .on_click({
+                let weak = weak.clone();
+                move |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.confirm_delete(note_id, window, cx));
+                }
+            });
 
         let actions = EffectTransition::new(CARD_ACTION_FADE)
             .ease(ease_out_cubic)
@@ -290,13 +230,17 @@ impl NotesPage {
         v_flex()
             .id(("note-card", note_id as u64))
             .relative()
-            .gap_2()
-            .p(tokens::spacing::MD)
+            .overflow_hidden()
+            .gap_1()
+            .px(tokens::spacing::MD)
+            .py(tokens::spacing::XS)
             .rounded(tokens::radius::SM)
             .bg(if selected { selected_bg } else { surface })
             .border_1()
             .border_color(if selected {
                 selection.opacity(0.35)
+            } else if hovered {
+                border_hover
             } else {
                 border
             })
@@ -327,16 +271,16 @@ impl NotesPage {
                 }
             })
             .when(!selected, |el| el.hover(move |style| style.bg(hover_bg)))
-            // 选中指示条：Fluent 左侧 3px Accent 色条（颜色随主题定义）
+            // 选中指示条：Fluent 左侧 3px Accent 色条，覆盖卡片整个左侧高度
+            // （颜色随主题定义；卡片圆角由 overflow_hidden 裁切）
             .when(selected, |el| {
                 el.child(
                     div()
                         .absolute()
                         .left_0()
-                        .top(tokens::spacing::SM)
-                        .bottom(tokens::spacing::SM)
+                        .top_0()
+                        .bottom_0()
                         .w(CARD_SELECTION_BAR)
-                        .rounded_full()
                         .bg(selection),
                 )
             })
@@ -347,13 +291,14 @@ impl NotesPage {
                     .relative()
                     .items_center()
                     .gap_2()
-                    .min_h(tokens::heights::CONTROL)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_role_sized(TextRole::DocumentTitle, content_px)
+                            .text_size(CARD_TITLE_FONT)
+                            .font_weight(TextRole::DocumentTitle.weight())
+                            .line_height(TextRole::DocumentTitle.line_height())
                             .child(title),
                     )
                     .child(
@@ -377,9 +322,11 @@ impl NotesPage {
                 el.child(
                     div()
                         .w_full()
-                        .text_role_sized(TextRole::Reading, content_px)
+                        .text_size(CARD_SUMMARY_FONT)
+                        .line_height(TextRole::Reading.line_height())
                         .text_color(muted)
                         .line_clamp(CARD_SUMMARY_LINES)
+                        .text_ellipsis()
                         .child(summary),
                 )
             })
@@ -398,7 +345,9 @@ impl NotesPage {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_role(TextRole::Meta)
+                            .text_size(CARD_META_FONT)
+                            .font_weight(TextRole::Meta.weight())
+                            .line_height(TextRole::Meta.line_height())
                             .text_color(muted)
                             .child(created),
                     ),
@@ -424,80 +373,81 @@ mod tests {
 }
 
 impl Render for NotesPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
-        let (border, muted, danger) = {
+        let (muted, danger) = {
             let theme = cx.theme();
-            (theme.border, theme.muted_foreground, theme.danger)
+            (theme.muted_foreground, theme.danger)
         };
-        // 内容阅读面：列表标题 / 摘要随编辑器字号缩放（辅助小字保持固定）
-        let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
+        let (input_border, focus_border) = {
+            let theme = cx.theme();
+            (
+                theme.input,
+                theme.primary.opacity(SEARCH_FOCUS_BORDER_OPACITY),
+            )
+        };
+        let search_border = if self
+            .query_input
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+        {
+            focus_border
+        } else {
+            input_border
+        };
+        // 列表卡片使用固定字号，不随编辑器字号缩放
         let notes_list_width = cx.global::<SettingsStore>().0.read(cx).notes_list_width();
         let split_state = self.split_state.clone();
 
-        // 行 1：搜索框 + 范围切换（标题 / 全文，selected 态分段）
-        let search_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(
-                div().flex_1().min_w_0().child(
+        // 列表容器顶部：搜索框（右侧内嵌筛选触发器）
+        let search_row = div().flex_shrink_0().px_3().pt_2().child(
+            div()
+                // 点击搜索框之外的任意处即失焦
+                .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                    if this
+                        .query_input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                    {
+                        window.blur(cx);
+                    }
+                }))
+                .child(
                     Input::new(&self.query_input)
-                        .small()
+                        .with_size(Size::Medium)
                         .w_full()
-                        .prefix(Icon::new(IconName::Search).with_size(Size::XSmall)),
+                        // 去掉 kit 的 3px 焦点环，改用 1px 淡主色描边
+                        .focus_ring(false)
+                        .border_color(search_border)
+                        .prefix(Icon::new(IconName::Search).with_size(Size::XSmall))
+                        .suffix(self.filter_popover(&weak)),
                 ),
-            )
-            .child(
-                Button::new("scope-title")
-                    .ghost()
-                    .small()
-                    .compact()
-                    .label("标题")
-                    .selected(self.scope == SearchScope::Title)
-                    .on_click({
-                        let weak = weak.clone();
-                        move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.scope = SearchScope::Title;
-                                this.refresh(cx);
-                            });
-                        }
-                    }),
-            )
-            .child(
-                Button::new("scope-fulltext")
-                    .ghost()
-                    .small()
-                    .compact()
-                    .label("全文")
-                    .selected(self.scope == SearchScope::FullText)
-                    .on_click({
-                        let weak = weak.clone();
-                        move |_, _, cx| {
-                            let _ = weak.update(cx, |this, cx| {
-                                this.scope = SearchScope::FullText;
-                                this.refresh(cx);
-                            });
-                        }
-                    }),
-            );
+        );
 
-        // 行 2：分类下拉 + 标签多选
-        let filter_row = h_flex()
-            .items_center()
-            .gap_2()
-            .child(self.category_filter_button(&weak))
-            .child(self.tag_filter_popover(&weak, muted));
-
-        let filter_bar = v_flex()
+        // 搜索框下方：左排序、右新增笔记；与列表同容器，不设下边框
+        let list_header = h_flex()
             .flex_shrink_0()
+            .items_center()
+            .justify_between()
             .gap_2()
             .px_3()
             .py_2()
-            .border_b_1()
-            .border_color(border)
-            .child(search_row)
-            .child(filter_row);
+            .child(self.sort_menu(&weak))
+            .child(
+                Button::new("notes-create")
+                    .primary()
+                    .small()
+                    .icon(IconName::Plus)
+                    .label("新增笔记")
+                    .on_click({
+                        let weak = weak.clone();
+                        move |_, window, cx| {
+                            let _ = weak.update(cx, |this, cx| this.create_note(window, cx));
+                        }
+                    }),
+            );
 
         // 列表区：错误占位（含重试）/ 空态 / 卡片列表
         let list_area = match &self.list {
@@ -558,42 +508,30 @@ impl Render for NotesPage {
             Ok(notes) => v_flex()
                 .flex_1()
                 .min_h_0()
-                .gap_2()
+                .gap_1()
                 .px_3()
                 .py_2()
                 .overflow_y_scrollbar()
-                .text_size(content_px)
                 .children(notes.iter().map(|note| {
                     let selected = self.selected == Some(note.id);
-                    self.note_card(note, selected, &weak, content_px, cx)
+                    self.note_card(note, selected, &weak, cx)
                 }))
                 .into_any_element(),
         };
 
-        // 左栏：筛选栏 + 列表（双栏组装，Phase 10）
+        // 左栏：搜索 / 排序 / 新增 + 列表（双栏组装，Phase 10）
         let left = v_flex()
             .size_full()
             .min_w_0()
-            .child(filter_bar)
+            .child(search_row)
+            .child(list_header)
             .child(list_area);
 
-        // 页顶操作区：编辑器三模式切换靠右；底部分割线将其与列表、
-        // 编辑器内容隔开；其下为列表 / 编辑器双栏
+        // 左右双栏直接铺满内容区：搜索归左栏，模式切换归右栏编辑器标题行
         v_flex()
             .size_full()
             .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .justify_end()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(border)
-                    .child(self.editor_mode_group(cx)),
-            )
-            .child(
-                // 双栏：分界线可拖动（左栏 400px 起步，钳制 ≥240px）
+                // 双栏：分界线可拖动（左栏宽度取自设置，默认 320px，钳制 ≥240px）
                 div().flex_1().min_h_0().child(
                     ResizableSplit::new(
                         "notes-page-split",
@@ -611,5 +549,7 @@ impl Render for NotesPage {
                     }),
                 ),
             )
+            // 弹窗挂最后：无样式 Dialog 走 deferred 图层，覆盖整个窗口
+            .when_some(self.render_taxonomy_modal(cx), |el, modal| el.child(modal))
     }
 }

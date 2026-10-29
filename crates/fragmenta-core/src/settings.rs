@@ -16,6 +16,8 @@ pub const FONT_SIZE_MIN_PX: f32 = 12.;
 pub const FONT_SIZE_MAX_PX: f32 = 24.;
 /// 内容正文字号默认值（逻辑像素）。
 pub const FONT_SIZE_DEFAULT_PX: f32 = 16.;
+/// 笔记列表默认宽度（逻辑像素）；笔记页搜索栏与高级筛选面板沿用该宽度。
+pub const NOTES_LIST_WIDTH_DEFAULT_PX: f32 = 320.;
 
 /// 应用设置，持久化为 exe 旁 settings.json。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,7 +55,7 @@ impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
             sidebar_width: 255.,
-            notes_list_width: 400.,
+            notes_list_width: NOTES_LIST_WIDTH_DEFAULT_PX,
             editor_source_width: 360.,
             tile_width: 300.,
             tile_height: 360.,

@@ -21,14 +21,29 @@ pub struct Note {
 }
 
 impl Note {
-    /// 正文摘要：回车替换为空格，截取前 50 个字符（按字符边界截断，不破坏 CJK）。
+    /// 正文摘要：回车替换为空格，按字符边界截断到 [`SUMMARY_MAX_CHARS`]（不破坏 CJK）；
+    /// 显示层再按容器宽度换行并以省略号截断。
+    ///
+    /// 逐字符累积而非先拼接全文再截断：卡片每帧调用，长正文不应整段拷贝。
     pub fn summary(&self) -> String {
-        self.content
-            .lines()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(SUMMARY_MAX_CHARS)
-            .collect()
+        let mut summary = String::with_capacity(SUMMARY_MAX_CHARS);
+        let mut used = 0;
+        for (ix, line) in self.content.lines().enumerate() {
+            if ix > 0 {
+                if used == SUMMARY_MAX_CHARS {
+                    break;
+                }
+                summary.push(' ');
+                used += 1;
+            }
+            for ch in line.chars() {
+                if used == SUMMARY_MAX_CHARS {
+                    return summary;
+                }
+                summary.push(ch);
+                used += 1;
+            }
+        }
+        summary
     }
 }

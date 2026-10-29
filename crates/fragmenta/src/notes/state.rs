@@ -148,6 +148,26 @@ impl NotesState {
         status
     }
 
+    /// 新建空笔记（笔记页"新增笔记"入口）：立即插入并广播 `Changed`，返回新笔记 id。
+    ///
+    /// 走库直接插入而非防抖草稿：新卡片需要立刻出现在列表里供选中，
+    /// 编辑器随后以 `Note(id)` 身份接管内容。
+    pub fn create_note(&mut self, cx: &mut Context<Self>) -> DbResult<i64> {
+        let now = chrono::Local::now();
+        let mut note = Note {
+            id: 0,
+            title: String::new(),
+            content: String::new(),
+            category: None,
+            tags: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        };
+        self.db.upsert_note(&mut note)?;
+        cx.emit(NotesEvent::Changed);
+        Ok(note.id)
+    }
+
     /// 删除成功后取消该笔记的待写槽与计时器，再广播 `Changed`。
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) -> DbResult<()> {
         self.db.delete_note(id)?;
@@ -180,14 +200,9 @@ impl NotesState {
         self.db.notes(filter)
     }
 
-    /// read-through：全部分类名（按名称排序）。
-    pub fn categories(&self) -> DbResult<Vec<String>> {
-        self.db.categories()
-    }
-
-    /// read-through：全部标签名（按名称排序；标签为显式实体，无引用亦留存）。
-    pub fn tags(&self) -> DbResult<Vec<String>> {
-        self.db.tags()
+    /// read-through：全部笔记数量（筛选面板计数）。
+    pub fn note_count(&self) -> DbResult<i64> {
+        self.db.note_count()
     }
 
     /// read-through：分类名 → 颜色（`#RRGGBB`，未选色为 None），
@@ -199,22 +214,6 @@ impl NotesState {
     /// read-through：标签名 → 颜色（`#RRGGBB`，未选色为 None）。
     pub fn tag_colors(&self) -> DbResult<HashMap<String, Option<String>>> {
         self.db.tag_colors()
-    }
-
-    /// 重命名分类；成功后广播 `Changed`（列表与筛选选项跟随刷新）。
-    ///
-    /// 返回结果供调用方呈现错误（源不存在 / 目标重名）。
-    pub fn rename_category(
-        &mut self,
-        from: &str,
-        to: &str,
-        cx: &mut Context<Self>,
-    ) -> DbResult<()> {
-        let result = self.db.rename_category(from, to);
-        if result.is_ok() {
-            cx.emit(NotesEvent::Changed);
-        }
-        result
     }
 
     /// 取出该槽并落库，返回结果；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。
@@ -255,6 +254,18 @@ impl NotesState {
 mod tests {
     use super::*;
     use gpui_kit::{AppContext as _, TestAppContext};
+
+    #[gpui_kit::test]
+    fn create_note_inserts_an_empty_note(cx: &mut TestAppContext) {
+        let db = Arc::new(Db::open_in_memory().unwrap());
+        let state = cx.new(|_| NotesState::new(db.clone()));
+        let id = state.update(cx, |state, cx| state.create_note(cx).unwrap());
+        let notes = db.notes(&NoteFilter::default()).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, id);
+        assert!(notes[0].title.is_empty());
+        assert!(notes[0].content.is_empty());
+    }
 
     #[gpui_kit::test]
     fn delete_cancels_only_the_deleted_notes_pending_write(cx: &mut TestAppContext) {

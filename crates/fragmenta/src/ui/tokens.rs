@@ -33,6 +33,8 @@ pub mod widths {
     pub const SETTINGS_CONTENT: Pixels = px(640.);
     pub const TAXONOMY_CONTENT: Pixels = px(560.);
     pub const DIALOG: Pixels = px(380.);
+    /// 笔记列表默认宽度：笔记页搜索栏与高级筛选面板沿用同一宽度。
+    pub const NOTES_LIST: Pixels = px(fragmenta_core::settings::NOTES_LIST_WIDTH_DEFAULT_PX);
     pub const TOAST_MAX: Pixels = px(360.);
     /// 待办页日历栏宽：日历卡（7 × 40 单元格 + 内边距 24 + 边框 2）306 + 页面留白 24。
     pub const CALENDAR: Pixels = px(330.);
@@ -40,8 +42,8 @@ pub mod widths {
     pub const TILE_MIN: Pixels = px(240.);
 
     pub const SIDEBAR_COLLAPSED: Pixels = px(80.);
-    pub const SIDEBAR_MIN: Pixels = px(180.);
-    pub const SIDEBAR_MAX: Pixels = px(420.);
+    pub const SIDEBAR_MIN: Pixels = px(150.);
+    pub const SIDEBAR_MAX: Pixels = px(360.);
     pub const SIDEBAR_DEFAULT: Pixels = px(255.);
 
     /// 标题栏最右侧窗口控制按钮（最小化 / 最大化 / 关闭）的宽度。
@@ -61,6 +63,8 @@ pub mod heights {
     pub const MAIN_WINDOW_MIN: Pixels = px(520.);
     pub const NAV_ITEM: Pixels = px(48.);
     pub const CONTROL: Pixels = px(32.);
+    /// 需要更大命中区域的图标按钮（如侧栏收起开关）。
+    pub const CONTROL_LARGE: Pixels = px(40.);
     /// 主窗口顶部通栏标题栏的高度。
     pub const TITLE_BAR: Pixels = px(40.);
     /// 文档标题输入行最小高度：字号放大时行随内容增高，不裁切文字。

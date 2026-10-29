@@ -15,11 +15,15 @@ use fragmenta_core::model::Note;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::text::TextView;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Icon, ResizableState, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, ResizableState, Selectable as _, Sizable as _,
+    h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -129,15 +133,56 @@ impl NoteEditor {
         }
     }
 
-    /// 当前编辑器模式，供笔记页构建标题栏操作区。
-    pub fn mode(&self) -> EditorMode {
-        self.mode
-    }
-
     /// 切换编辑器模式。
-    pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
+    fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
         self.mode = mode;
         cx.notify();
+    }
+
+    /// 标题行右侧的三模式切换组；未载入笔记时整组禁用（空态占位与模式无关）。
+    fn mode_group(&self, cx: &Context<Self>) -> AnyElement {
+        let mode = self.mode;
+        let disabled = self.note_id.is_none();
+        let button = |id: &'static str, label: &'static str, icon: IconName, target: EditorMode| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .compact()
+                .icon(icon)
+                .label(label)
+                .selected(mode == target)
+                .disabled(disabled)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.set_mode(target, cx);
+                }))
+        };
+        h_flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_0p5()
+            .p(px(1.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .rounded(px(4.))
+            .child(button(
+                "editor-mode-source",
+                "源码",
+                IconName::PenLine,
+                EditorMode::Source,
+            ))
+            .child(button(
+                "editor-mode-preview",
+                "预览",
+                IconName::Eye,
+                EditorMode::Preview,
+            ))
+            .child(button(
+                "editor-mode-split",
+                "分屏",
+                IconName::Columns2,
+                EditorMode::Split,
+            ))
+            .into_any_element()
     }
 
     /// 载入笔记：整体替换标题与正文（调用方——笔记页——已先落目标 key 的
@@ -232,26 +277,41 @@ impl Render for NoteEditor {
             .editor_source_width();
         let split_state = self.split_state.clone();
 
-        // 空态：未选中笔记
+        // 顶部独占一行：三模式切换组靠右（未选中笔记时整组禁用）
+        let mode_row = h_flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_end()
+            .px(tokens::spacing::SM)
+            .py(tokens::spacing::XS)
+            .child(self.mode_group(cx));
+
+        // 空态：未选中笔记（仅保留禁用的模式行，不占标题行空间）
         let Some(_) = self.note_id else {
             return v_flex()
                 .size_full()
                 .bg(background)
-                .items_center()
-                .justify_center()
+                .child(mode_row)
                 .child(
-                    Empty::new().header(
-                        EmptyHeader::new()
-                            .media(
-                                EmptyMedia::new()
-                                    .with_variant(EmptyMediaVariant::Icon)
-                                    .child(Icon::new(IconName::FileText)),
-                            )
-                            .title(EmptyTitle::new().child("未选择笔记"))
-                            .description(
-                                EmptyDescription::new().child("点击左侧卡片，在此阅读与编辑笔记"),
+                    v_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Empty::new().header(
+                                EmptyHeader::new()
+                                    .media(
+                                        EmptyMedia::new()
+                                            .with_variant(EmptyMediaVariant::Icon)
+                                            .child(Icon::new(IconName::FileText)),
+                                    )
+                                    .title(EmptyTitle::new().child("未选择笔记"))
+                                    .description(
+                                        EmptyDescription::new().child("点击左侧卡片，在此阅读与编辑笔记"),
+                                    ),
                             ),
-                    ),
+                        ),
                 )
                 .into_any_element();
         };
@@ -263,13 +323,12 @@ impl Render for NoteEditor {
             SaveIndicator::Failed => Some("保存失败"),
         };
 
-        // 模式切换按钮组由主窗口标题栏承载（与页面标题同行，见 windows/main）
-
         let title_row = h_flex()
             .flex_shrink_0()
             .min_h(tokens::heights::TITLE_ROW)
             .items_center()
             .overflow_hidden()
+            .border_t_1()
             .border_b_1()
             .border_color(border)
             .child(
@@ -278,7 +337,8 @@ impl Render for NoteEditor {
                     .px(px(12.))
                     .font_weight(FontWeight::BOLD)
                     .h_auto()
-                    .text_size(content_px),
+                    // 标题固定 16px：编辑器字号只作用于正文内容区
+                    .text_size(tokens::font::DEFAULT_CONTENT),
             );
 
         // 正文区：三模式（Split 内分栏同样可拖动，两栏滚动独立）
@@ -312,6 +372,7 @@ impl Render for NoteEditor {
             .size_full()
             .min_w_0()
             .bg(background)
+            .child(mode_row)
             .child(title_row)
             .child(
                 div()

@@ -246,7 +246,10 @@ impl Render for MainShell {
             .flex()
             .items_center()
             .justify_center()
-            .size(tokens::heights::CONTROL)
+            // 收起态与下方导航项保持相同的命中 / 悬停区域；
+            // 展开态用更大的命中区，同时压缩顶部留白，保持该行高度不变。
+            .when(collapsed, |this| this.w_full().h(tokens::heights::NAV_ITEM))
+            .when(!collapsed, |this| this.size(tokens::heights::CONTROL_LARGE))
             .rounded(tokens::radius::SM)
             .cursor_pointer()
             .hover(|this| this.bg(cx.theme().sidebar_accent.opacity(0.8)))
@@ -276,7 +279,8 @@ impl Render for MainShell {
             .child(
                 h_flex()
                     .w_full()
-                    .pt(tokens::spacing::MD)
+                    .when(collapsed, |this| this.pt(tokens::spacing::MD))
+                    .when(!collapsed, |this| this.pt(tokens::spacing::XS))
                     .px(tokens::spacing::MD)
                     .when(!collapsed, |this| this.justify_end())
                     .when(collapsed, |this| this.justify_center())
