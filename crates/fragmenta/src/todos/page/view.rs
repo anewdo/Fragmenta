@@ -11,7 +11,7 @@ use fragmenta_core::model::Todo;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::{Calendar, CalendarItem, CalendarItemKind, CalendarItemState};
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::dialog::{Confirm, DialogContent};
 use gpui_kit::component::empty::{
@@ -27,10 +27,11 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{TodoForm, TodosPage};
+use super::{DayMark, TodoForm, TodosPage};
 use crate::settings::SettingsStore;
 use crate::ui::focus::{TextFieldExt as _, input_border};
-use crate::ui::tokens;
+use crate::ui::note_list;
+use crate::ui::tokens::{self, TextRole, TextRoleExt};
 use crate::utils::time;
 
 /// 日历单元格边长：kit 默认 32 放大到 40（对齐 kit Large 档几何），
@@ -39,6 +40,10 @@ const CALENDAR_CELL: Pixels = px(40.);
 /// 待办圆点直径与距单元格右上角的内缩。
 const CALENDAR_DOT: Pixels = px(4.);
 const CALENDAR_DOT_INSET: Pixels = px(6.);
+/// 图例圆点直径：比日历单元格内的圆点大一号，便于与说明文字并读。
+const LEGEND_DOT: Pixels = px(8.);
+/// 待办条目行高：操作按钮高 32，上下各留 2px。
+const TODO_ITEM_HEIGHT: Pixels = px(36.);
 
 /// 由网格单元格的日号与邻月标记还原实际日期：前导日（日号 > 15）属上月尾、
 /// 尾随日（日号 ≤ 15）属次月头——网格溢出至多 6 天，两段日号不相交。
@@ -57,6 +62,21 @@ fn visible_date(year: i32, month: u8, day: u32, adjacent: bool) -> NaiveDate {
         (year, month as u32 + 1)
     };
     NaiveDate::from_ymd_opt(year, month, day).expect("网格单元格日恒为合法日期")
+}
+
+/// 日历图例项：圆点 + 说明文字，注解两种圆点状态的含义。
+fn legend_item(label: &'static str, color: Hsla, muted: Hsla) -> AnyElement {
+    h_flex()
+        .items_center()
+        .gap_1()
+        .child(div().size(LEGEND_DOT).rounded_full().bg(color))
+        .child(
+            div()
+                .text_role(TextRole::Meta)
+                .text_color(muted)
+                .child(label),
+        )
+        .into_any_element()
 }
 
 /// Dialog 表单内容：内容输入 + 「指定时间区间」勾选 + 起止时间（勾选时显示）。
@@ -180,9 +200,10 @@ pub(super) fn form_footer(
 }
 
 impl TodosPage {
-    /// 单条待办：圆形 check + 内容（可多行）+ 可选区间行 + hover 编辑 / 删除。
+    /// 单条待办：圆形 check + 单行内容 + 可选区间 + hover 编辑 / 删除。
     ///
-    /// 完成态：check 实心、内容与区间均加删除线；全天（无区间）条目只有内容行。
+    /// 完成态：check 实心、内容与区间均加删除线。行内元素垂直居中，
+    /// check 圆心与文字行中心对齐；区间紧邻操作按钮左侧，内容截断让位。
     #[allow(clippy::too_many_arguments)]
     fn todo_item(
         &self,
@@ -191,23 +212,24 @@ impl TodosPage {
         secondary: Hsla,
         border: Hsla,
         muted: Hsla,
+        danger: Hsla,
         primary: Hsla,
         primary_foreground: Hsla,
+        content_px: Pixels,
+        cx: &App,
     ) -> AnyElement {
         let id = todo.id;
         let done = todo.done;
         let group = format!("todo-{id}");
 
-        // 圆形 check：点击翻转完成态
+        // 圆形 check：完成态实心，点击由整行容器接管
         let check = div()
-            .id(("todo-check", id as u64))
             .flex_shrink_0()
             .size_4()
             .rounded_full()
             .flex()
             .items_center()
             .justify_center()
-            .cursor_pointer()
             .map(|el| {
                 if done {
                     el.bg(primary).child(
@@ -218,44 +240,42 @@ impl TodosPage {
                 } else {
                     el.border_1().border_color(border)
                 }
-            })
-            .on_click({
-                let weak = weak.clone();
-                let todo = todo.clone();
-                move |_, window, cx| {
-                    let _ = weak.update(cx, |page, cx| {
-                        let result = page.todos.update(cx, |state, cx| state.toggle(&todo, cx));
-                        if let Err(err) = result {
-                            window.push_notification(Notification::error(err.to_string()), cx);
-                        }
-                    });
-                }
             });
 
-        // 内容行：check + 内容 + hover 编辑 / 删除
+        // 内容：单行截断，完成后加删除线并降级为 muted
+        let content = note_list::single_line(todo.content.clone(), content_px).map(|el| {
+            if done {
+                el.line_through().text_color(muted)
+            } else {
+                el
+            }
+        });
+
+        // 区间：紧邻操作按钮左侧，内容过长时先截断内容
+        let interval = todo.interval.map(|(start, end)| {
+            div()
+                .flex_shrink_0()
+                .text_role(TextRole::Meta)
+                .text_color(muted)
+                .when(done, |el| el.line_through())
+                .child(time::todo_interval_label(start, end))
+        });
+
+        // 内容行：check + 内容 + 区间 + hover 编辑 / 删除。
+        // items_center 让 check 圆心与文字行中心重合，消除基线差异。
         let content_row = h_flex()
-            .items_start()
+            .items_center()
             .gap_2()
             .child(check)
+            .child(content)
+            .when_some(interval, |el, interval| el.child(interval))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(13.))
-                    .map(|el| {
-                        if done {
-                            el.line_through().text_color(muted)
-                        } else {
-                            el
-                        }
-                    })
-                    .child(todo.content.clone()),
-            )
-            .child(
+                // 图标沿用 24px 按钮档的 14px，命中区单独放大到 32px
                 Button::new(("todo-edit", id as u64))
                     .ghost()
-                    .compact()
-                    .xsmall()
+                    .small()
+                    .w(tokens::heights::CONTROL)
+                    .h(tokens::heights::CONTROL)
                     .icon(IconName::PenLine)
                     .opacity(0.)
                     .group_hover(group.as_str(), |style| style.opacity(1.))
@@ -263,6 +283,8 @@ impl TodosPage {
                         let weak = weak.clone();
                         let todo = todo.clone();
                         move |_, window, cx| {
+                            // 操作按钮的点击不触发整行 check / uncheck
+                            cx.stop_propagation();
                             let _ = weak
                                 .update(cx, |page, cx| page.open_edit(todo.clone(), window, cx));
                         }
@@ -270,15 +292,22 @@ impl TodosPage {
             )
             .child(
                 Button::new(("todo-delete", id as u64))
-                    .ghost()
-                    .compact()
-                    .xsmall()
+                    .custom(
+                        ButtonCustomVariant::new(cx)
+                            .foreground(danger)
+                            .hover(danger.opacity(0.12))
+                            .active(danger.opacity(0.2)),
+                    )
+                    .small()
+                    .w(tokens::heights::CONTROL)
+                    .h(tokens::heights::CONTROL)
                     .icon(IconName::Trash)
                     .opacity(0.)
                     .group_hover(group.as_str(), |style| style.opacity(1.))
                     .on_click({
                         let weak = weak.clone();
                         move |_, _, cx| {
+                            cx.stop_propagation();
                             let _ = weak.update(cx, |page, cx| {
                                 page.todos.update(cx, |state, cx| state.delete(id, cx))
                             });
@@ -290,21 +319,25 @@ impl TodosPage {
             .id(("todo-item", id as u64))
             .test_support()
             .group(group)
-            .gap_1()
-            .p_2()
-            .rounded(px(6.))
+            .justify_center()
+            .min_h(TODO_ITEM_HEIGHT)
+            .px(tokens::spacing::SM)
+            .rounded(tokens::radius::SM)
+            .cursor_pointer()
             .hover(move |style| style.bg(secondary))
             .child(content_row)
-            // 区间行：左缩进对齐内容（16px check + 8px gap）
-            .when_some(todo.interval, |el, (start, end)| {
-                el.child(
-                    div()
-                        .pl(px(24.))
-                        .text_size(px(12.))
-                        .text_color(muted)
-                        .when(done, |el| el.line_through())
-                        .child(time::todo_interval_label(start, end)),
-                )
+            // 整行（除操作按钮外）点击切换完成态
+            .on_click({
+                let weak = weak.clone();
+                let todo = todo.clone();
+                move |_, window, cx| {
+                    let _ = weak.update(cx, |page, cx| {
+                        let result = page.todos.update(cx, |state, cx| state.toggle(&todo, cx));
+                        if let Err(err) = result {
+                            window.push_notification(Notification::error(err.to_string()), cx);
+                        }
+                    });
+                }
             })
             .into_any_element()
     }
@@ -316,7 +349,8 @@ impl TodosPage {
 
     /// 左日历卡：base 层承载全部交互（点选 / 翻月 / 月年选择 / 键盘），
     /// 装修沿用 kit 日历开箱规则并放大单元格；自定义之处：周一为列首
-    /// （「一」…「六」「日」）、月 / 年用阿拉伯数字、有待办的日子右上角加圆点。
+    /// （「一」…「六」「日」）、月 / 年用阿拉伯数字、有待办的日子右上角加圆点
+    /// （未完成为主题色 / 全部完成为绿色，含义见日历下方图例）。
     fn calendar_card(&self, cx: &mut Context<Self>) -> AnyElement {
         let (year, month) = {
             let state = self.calendar.read(cx);
@@ -326,6 +360,7 @@ impl TodosPage {
         let (border, muted, foreground) = (theme.border, theme.muted_foreground, theme.foreground);
         let (accent, accent_foreground) = (theme.accent, theme.accent_foreground);
         let (primary, primary_foreground) = (theme.primary, theme.primary_foreground);
+        let success = theme.success;
         let secondary_hover = theme.secondary_hover;
         let (cell_radius, card_radius) = (theme.radius * 2., theme.radius_lg);
         let marked = self.marked.clone();
@@ -363,8 +398,13 @@ impl TodosPage {
                     .child(Icon::new(IconName::ChevronRight).size_4()),
                 _ => item,
             };
-            let has_todo = kind == CalendarItemKind::Day
-                && marked.contains(&visible_date(year, month, item_day.get(), st.is_muted()));
+            let mark = if kind == CalendarItemKind::Day {
+                marked
+                    .get(&visible_date(year, month, item_day.get(), st.is_muted()))
+                    .copied()
+            } else {
+                None
+            };
             item.relative()
                 .size(CALENDAR_CELL)
                 .rounded(cell_radius)
@@ -423,7 +463,7 @@ impl TodosPage {
                 .when(st.is_today() && !st.is_active(), |this| {
                     this.bg(accent).text_color(accent_foreground)
                 })
-                .when(has_todo, |this| {
+                .when_some(mark, |this, mark| {
                     this.child(
                         div()
                             .absolute()
@@ -431,10 +471,10 @@ impl TodosPage {
                             .right(CALENDAR_DOT_INSET)
                             .size(CALENDAR_DOT)
                             .rounded_full()
-                            .bg(if st.is_active() {
-                                primary_foreground
-                            } else {
-                                primary
+                            .bg(match mark {
+                                DayMark::Done => success,
+                                DayMark::Pending if st.is_active() => primary_foreground,
+                                DayMark::Pending => primary,
                             }),
                     )
                 })
@@ -452,7 +492,7 @@ impl TodosPage {
 impl Render for TodosPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
-        let (secondary, border, muted, danger, primary, primary_foreground) = {
+        let (secondary, border, muted, danger, primary, primary_foreground, success) = {
             let theme = cx.theme();
             (
                 theme.secondary,
@@ -461,6 +501,7 @@ impl Render for TodosPage {
                 theme.danger,
                 theme.primary,
                 theme.primary_foreground,
+                theme.success,
             )
         };
         // 内容阅读面：清单条目随编辑器字号缩放（日历与辅助小字保持固定）
@@ -578,8 +619,11 @@ impl Render for TodosPage {
                         secondary,
                         border,
                         muted,
+                        danger,
                         primary,
                         primary_foreground,
+                        content_px,
+                        cx,
                     )
                 }))
                 .into_any_element(),
@@ -595,8 +639,17 @@ impl Render for TodosPage {
                 v_flex()
                     .w(tokens::widths::CALENDAR)
                     .flex_shrink_0()
+                    .gap_2()
                     .p(tokens::spacing::MD)
-                    .child(self.calendar_card(cx)),
+                    .child(self.calendar_card(cx))
+                    // 日历下方图例：两种圆点状态的含义
+                    .child(
+                        h_flex()
+                            .justify_center()
+                            .gap_6()
+                            .child(legend_item("未完成", primary, muted))
+                            .child(legend_item("全部完成", success, muted)),
+                    ),
             )
             .child(
                 v_flex()

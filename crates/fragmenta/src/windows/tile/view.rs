@@ -39,8 +39,6 @@ const NOTE_SUMMARY_LINES: usize = 1;
 const TILE_NOTE_TITLE_FONT: Pixels = px(13.);
 const TILE_NOTE_SUMMARY_FONT: Pixels = px(11.);
 const TODO_CHECK_SIZE: Pixels = px(16.);
-const TODO_CHECK_OFFSET: Pixels = px(2.);
-const TODO_TIME_INDENT: Pixels = px(24.);
 
 /// 顶栏保存状态（区别于 state 层 `SaveStatus`：补充 UI 侧"未触碰 / 防抖中"两态）。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -167,7 +165,7 @@ impl TileView {
         let settings = cx.global::<SettingsStore>().0.clone();
         let appearance_sub =
             settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
-        // 订阅矩阵（§5.6）：小窗字号变化 → 标题 / 正文重渲染（tile_font_px）
+        // 小窗字号变化 → 标题 / 正文重渲染（tile_font_px）
         let settings_sub = cx.subscribe(&settings, |_, _, _: &SettingsEvent, cx| {
             cx.notify();
         });
@@ -708,7 +706,6 @@ impl TileView {
         let check = div()
             .flex_shrink_0()
             .size(TODO_CHECK_SIZE)
-            .mt(TODO_CHECK_OFFSET)
             .rounded_full()
             .flex()
             .items_center()
@@ -724,10 +721,12 @@ impl TileView {
                     element.border_1().border_color(border)
                 }
             });
-        // 点击整行任意处即切换完成状态（含勾选框与时间行），不再只限勾选框。
-        v_flex()
+        // 单行内容与区间同行，check 圆心与文字行中心对齐（items_center）；
+        // 点击整行任意处即切换完成状态。
+        h_flex()
             .id(("tile-todo", todo.id as u64))
-            .gap(tokens::spacing::XS)
+            .items_center()
+            .gap(tokens::spacing::SM)
             .p(tokens::spacing::SM)
             .rounded(tokens::radius::SM)
             .cursor_pointer()
@@ -739,24 +738,18 @@ impl TileView {
                     let _ = weak.update(cx, |this, cx| this.toggle_todo(todo.clone(), window, cx));
                 }
             })
-            .child(
-                h_flex()
-                    .items_start()
-                    .gap(tokens::spacing::SM)
-                    .child(check)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_role_sized(TextRole::Body, content_px)
-                            .when(done, |element| element.line_through().text_color(muted))
-                            .child(todo.content.clone()),
-                    ),
-            )
+            .child(check)
+            .child(note_list::single_line(todo.content.clone(), content_px).map(|element| {
+                if done {
+                    element.line_through().text_color(muted)
+                } else {
+                    element
+                }
+            }))
             .when_some(todo.interval, |element, (start, end)| {
                 element.child(
                     div()
-                        .pl(TODO_TIME_INDENT)
+                        .flex_shrink_0()
                         .text_role(TextRole::Meta)
                         .text_color(muted)
                         .when(done, |element| element.line_through())

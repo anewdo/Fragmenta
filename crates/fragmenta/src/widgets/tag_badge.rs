@@ -1,12 +1,11 @@
 //! 通用小部件（架构 §5.10）：标签徽片与分类标识。
 //!
 //! 颜色取自条目的 DB 持久颜色（ADR-0008，`#RRGGBB` 落库）；未选色以
-//! 主题中性样式渲染。分类徽片为填充 Tag（白字 + 文件夹图标），标签徽片
-//! 为 outline Tag 带 `#` 前缀。chip 构造同时导出给分类标签表单复用。
+//! 主题中性样式渲染。分类徽片为填充 Tag（白字），标签徽片为 outline Tag
+//! 带 `#` 前缀。chip 构造同时导出给分类标签表单复用。
 
-use gpui_kit::assets::IconName;
 use gpui_kit::component::tag::Tag;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable, Size, Theme};
+use gpui_kit::component::{ActiveTheme as _, Sizable, Size, Theme};
 use gpui_kit::{App, Hsla, IntoElement, ParentElement, RenderOnce, SharedString, Window};
 
 use crate::utils::palette::filled_foreground;
@@ -42,7 +41,6 @@ pub(crate) fn category_filled_chip(
     };
     tag.with_size(Size::XSmall)
         .rounded_full()
-        .child(Icon::new(IconName::Folder).with_size(Size::XSmall))
         .child(label.into())
 }
 
@@ -74,7 +72,7 @@ impl RenderOnce for TagBadge {
     }
 }
 
-/// 分类标识：填充样式 + 文件夹图标前缀，与标签徽片形成视觉区分。
+/// 分类标识：填充样式，与标签徽片形成视觉区分。
 #[derive(IntoElement)]
 pub struct CategoryTag {
     label: SharedString,

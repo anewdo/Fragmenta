@@ -6,7 +6,7 @@
 
 mod view;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use chrono::{Days, Local, NaiveDate, NaiveTime};
 
@@ -25,6 +25,13 @@ use crate::settings::SettingsStore;
 use crate::todos::TodosStore;
 use crate::todos::{TodosEvent, TodosState};
 use crate::ui::dialog_motion;
+
+/// 日历圆点状态：当天仍有未完成待办，或当天待办已全部完成。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum DayMark {
+    Pending,
+    Done,
+}
 
 /// 新建 / 编辑共用的 Dialog 表单（每次打开为全新实体，对话框关闭即释放）。
 ///
@@ -62,8 +69,8 @@ pub(crate) struct TodosPage {
     selected: NaiveDate,
     /// 选中日清单快照：查询失败时存错误信息（错误占位 + 重试）。
     list: Result<Vec<Todo>, String>,
-    /// 可见日历网格内存在待办的日子（单元格右上角圆点）。
-    marked: HashSet<NaiveDate>,
+    /// 可见日历网格内有待办的日子及其圆点状态（单元格右上角圆点）。
+    marked: HashMap<NaiveDate, DayMark>,
     /// `marked` 对应的可见月；base 每帧 notify，翻月才重拉。
     marked_month: (i32, u8),
     _calendar_sub: Subscription,
@@ -119,7 +126,7 @@ impl TodosPage {
             calendar,
             selected: today,
             list: Ok(Vec::new()),
-            marked: HashSet::new(),
+            marked: HashMap::new(),
             marked_month: (0, 0),
             _calendar_sub: calendar_sub,
             _calendar_observe: calendar_observe,
@@ -143,6 +150,7 @@ impl TodosPage {
     }
 
     /// 重拉圆点快照（render 外调用）：取可见月 ± 一周，覆盖网格溢出的邻月日；
+    /// 同日多条待办合并为一种状态——任一未完成即为 `Pending`，否则 `Done`。
     /// 查询失败退化为无圆点（清单区错误占位已承载可见反馈）。
     fn refresh_marked(&mut self, cx: &mut Context<Self>) {
         let (year, month) = {
@@ -163,12 +171,16 @@ impl TodosPage {
         let to = last
             .checked_add_days(Days::new(7))
             .expect("后一周在支持范围内");
-        self.marked = self
-            .todos
-            .read(cx)
-            .todos_between(from, to)
-            .map(|todos| todos.into_iter().map(|todo| todo.date).collect())
-            .unwrap_or_default();
+        let mut marked = HashMap::new();
+        if let Ok(todos) = self.todos.read(cx).todos_between(from, to) {
+            for todo in todos {
+                let mark = marked.entry(todo.date).or_insert(DayMark::Done);
+                if !todo.done {
+                    *mark = DayMark::Pending;
+                }
+            }
+        }
+        self.marked = marked;
         self.marked_month = (year, month);
         cx.notify();
     }

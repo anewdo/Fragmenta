@@ -1,4 +1,5 @@
-//! 笔记列表文本排版：笔记页卡片与磁贴列表共用标题 / 摘要截断规则。
+//! 列表文本排版：笔记页卡片与磁贴列表共用标题 / 摘要截断规则，
+//! 待办条目复用单行正文截断。
 
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -17,6 +18,20 @@ pub fn note_title(title: impl Into<SharedString>, font_px: Pixels) -> Div {
         .font_weight(TextRole::DocumentTitle.weight())
         .line_height(TextRole::DocumentTitle.line_height())
         .child(title.into())
+}
+
+/// 单行正文（待办条目内容等）：超宽以省略号收尾，字重与行高取正文角色。
+/// 返回元素可伸缩，放在水平容器里与右侧元信息共用一行。
+pub fn single_line(text: impl Into<SharedString>, font_px: Pixels) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .line_clamp(1)
+        .text_ellipsis()
+        .text_size(font_px)
+        .font_weight(TextRole::Body.weight())
+        .line_height(TextRole::Body.line_height())
+        .child(text.into())
 }
 
 /// 笔记列表摘要：最多 `lines` 行，超出以省略号截断；颜色由调用方决定。
