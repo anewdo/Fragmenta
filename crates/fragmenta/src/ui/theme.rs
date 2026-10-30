@@ -1,6 +1,7 @@
 //! 内置 JSON 主题：资源嵌入、模式应用与开发期热重载。
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use gpui_kit::App;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeRegistry};
@@ -9,6 +10,10 @@ use super::tokens;
 
 const LIGHT_NAME: &str = "Fragmenta Light";
 const DARK_NAME: &str = "Fragmenta Dark";
+
+/// 弹窗入场 / 退场时长（ADR-0010）：kit 两种方向共用一个 token，
+/// 取参考退场时长 0.28s，比 kit 默认 180ms 更从容。
+const DIALOG_DURATION: Duration = Duration::from_millis(280);
 
 /// 同步登记内嵌主题，首次应用前即可使用，发布时无需外置资源。
 pub(crate) fn init(cx: &mut App) {
@@ -62,6 +67,9 @@ pub(crate) fn apply(mode: ThemeMode, cx: &mut App) {
         theme.apply_config(&config);
         theme.radius = tokens::radius::SM;
         theme.radius_lg = tokens::radius::MD;
+        // 焦点反馈统一改由 1px 主色描边承担（ADR-0010），关闭 kit 的 3px 焦点环。
+        theme.focus_ring = false;
+        theme.motion.duration_normal = DIALOG_DURATION;
     });
 }
 

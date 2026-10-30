@@ -7,6 +7,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{App, Global, Window};
 
 use crate::notes::{NotesStore, SaveStatus};
+use crate::ui::dialog_motion;
 use crate::windows;
 
 /// 保存失败的退出提示存活期间，阻止主窗口关闭与重复弹窗。
@@ -48,8 +49,7 @@ pub(crate) fn request_quit(cx: &mut App) {
 
 fn quit_failed_dialog(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, |dialog, _, _| {
-        dialog
-            .title("保存失败")
+        dialog_motion::kit_dialog(dialog.title("保存失败"))
             .overlay_closable(false)
             .close_button(false)
             .child("部分内容未能保存。仍要退出将丢弃未保存的内容；你也可以重试，或返回界面复制内容到其他地方。")
@@ -110,9 +110,20 @@ mod tests {
     use fragmenta_core::model::NoteFilter;
     use fragmenta_core::settings::Settings;
     use gpui_kit::test::TestWindowExt as _;
-    use gpui_kit::{Context, IntoElement, Render, TestAppContext, WindowOptions, div};
+    use gpui_kit::{
+        AnyWindowHandle, Context, IntoElement, Render, TestAppContext, WindowOptions, div,
+    };
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    /// 推进动画时钟并重绘：让弹窗入场 / 退场落到稳定状态。
+    /// 时长为主题 motion token（应用内 280ms），这里取足够长的固定值。
+    fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+        cx.background_executor
+            .advance_clock(std::time::Duration::from_millis(400));
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
 
     struct PromptHost;
 
@@ -147,6 +158,10 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             quit_failed_dialog(window, cx);
             window.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
             assert!(window.find("dialog").visible());
             assert!(window.find("quit-discard").visible());
             window.click("quit-retry", cx);
@@ -159,6 +174,8 @@ mod tests {
             window.click("quit-return", cx);
         })
         .unwrap();
+        // 退场动画播完前弹窗仍挂载，推进时钟后才移除。
+        settle(cx, handle);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("dialog").is_none());
@@ -239,6 +256,11 @@ mod tests {
         let handle = windows[0];
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
+        })
+        .unwrap();
+        settle(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
             assert!(window.find("dialog").visible());
         })
         .unwrap();
@@ -246,6 +268,7 @@ mod tests {
         let mut visual = gpui_kit::VisualTestContext::from_window(handle, cx);
         assert!(!visual.simulate_close());
         cx.simulate_keystrokes(handle, "escape");
+        settle(cx, handle);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("dialog").is_none());

@@ -25,6 +25,8 @@ use gpui_kit::*;
 
 use super::{TaxonomyKind, TaxonomyState, TaxonomyStore};
 use crate::notes::{NotesEvent, NotesStore};
+use crate::ui::dialog_motion;
+use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::layout::{LayoutClass, content_column};
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::utils::palette::{format_hex_color, palette_colors, parse_hex_color};
@@ -346,8 +348,7 @@ impl TaxonomyPage {
         let weak = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let weak = weak.clone();
-            alert
-                .confirm()
+            dialog_motion::alert_dialog(alert.confirm())
                 .title(format!("删除{}", kind.label()))
                 .description(description.clone())
                 .ok_text("删除")
@@ -427,6 +428,7 @@ impl TaxonomyPage {
     fn render_list(
         &self,
         list: &[TaxonomyEntry],
+        window: &mut Window,
         weak: &WeakEntity<TaxonomyPage>,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -435,7 +437,10 @@ impl TaxonomyPage {
             .flex_1()
             .min_h_0()
             .gap(tokens::spacing::SM)
-            .children(list.iter().map(|entry| self.render_row(entry, theme, weak)))
+            .children(
+                list.iter()
+                    .map(|entry| self.render_row(entry, theme, window, weak, cx)),
+            )
             .into_any_element()
     }
 
@@ -445,7 +450,9 @@ impl TaxonomyPage {
         &self,
         entry: &TaxonomyEntry,
         theme: &gpui_kit::component::Theme,
+        window: &mut Window,
         weak: &WeakEntity<TaxonomyPage>,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let dot_color = entry.color.as_deref().and_then(parse_hex_color);
         let mut color_popover = Popover::new(("taxonomy-color", entry.id as u64))
@@ -480,8 +487,8 @@ impl TaxonomyPage {
             let current_hex = entry.color.clone();
             let weak_content = weak.clone();
             let id = entry.id;
-            color_popover = color_popover.content(move |_, _, cx| {
-                color_popover_content(id, &current_hex, &picker, &weak_content, cx)
+            color_popover = color_popover.content(move |_, window, cx| {
+                color_popover_content(id, &current_hex, &picker, &weak_content, window, cx)
             });
         }
         let count = div()
@@ -506,12 +513,17 @@ impl TaxonomyPage {
             .filter(|session| session.id == entry.id)
         {
             // 重命名中：名称位替换为会话输入框，操作按钮隐藏
+            let rename_border = input_border(
+                theme,
+                session.input.read(cx).focus_handle(cx).is_focused(window),
+            );
             row = row
                 .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(Input::new(&session.input).w_full()),
+                    div().flex_1().min_w_0().child(
+                        Input::new(&session.input)
+                            .w_full()
+                            .text_field_focus(rename_border),
+                    ),
                 )
                 .child(count);
         } else {
@@ -565,9 +577,20 @@ impl Render for TaxonomyPage {
         let layout = LayoutClass::from_width(window.viewport_size().width);
         let weak = cx.entity().downgrade();
         // 钉顶新建行（不随列表滚动）+ 可滚动主体，骨架同笔记页筛选栏模式
+        let create_border = input_border(
+            cx.theme(),
+            self.create_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window),
+        );
         let create_row = content_column(tokens::widths::TAXONOMY_CONTENT)
             .flex_shrink_0()
-            .child(Input::new(&self.create_input).w_full());
+            .child(
+                Input::new(&self.create_input)
+                    .w_full()
+                    .text_field_focus(create_border),
+            );
         let body = match &self.list {
             Err(err) => self.render_error(err, cx),
             Ok(list) if list.is_empty() => v_flex()
@@ -582,7 +605,7 @@ impl Render for TaxonomyPage {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scrollbar()
-                .child(self.render_list(list, &weak, cx))
+                .child(self.render_list(list, window, &weak, cx))
                 .into_any_element(),
         };
         v_flex()
@@ -655,6 +678,7 @@ fn color_popover_content(
     current_hex: &Option<String>,
     picker: &Entity<ColorPickerState>,
     weak: &WeakEntity<TaxonomyPage>,
+    window: &mut Window,
     cx: &mut Context<PopoverState>,
 ) -> AnyElement {
     let theme = cx.theme().clone();
@@ -726,6 +750,10 @@ fn color_popover_content(
         .unwrap_or_else(fallback_picker_color);
     let sliders = picker_state.sliders().clone();
     let hex_input = picker_state.hex_input().clone();
+    let hex_border = input_border(
+        &theme,
+        hex_input.read(cx).focus_handle(cx).is_focused(window),
+    );
 
     let hue_track = h_flex()
         .absolute()
@@ -761,7 +789,12 @@ fn color_popover_content(
             v_flex()
                 .gap_2()
                 .child(div().text_role(TextRole::Meta).child("自定义"))
-                .child(Input::new(&hex_input).small().w_full())
+                .child(
+                    Input::new(&hex_input)
+                        .small()
+                        .w_full()
+                        .text_field_focus(hex_border),
+                )
                 .child(color_slider("色相", sliders.hue(), hue_track, &theme))
                 .child(color_slider(
                     "饱和",

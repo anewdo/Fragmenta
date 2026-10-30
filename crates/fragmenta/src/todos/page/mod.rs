@@ -24,6 +24,7 @@ use crate::settings::SettingsEvent;
 use crate::settings::SettingsStore;
 use crate::todos::TodosStore;
 use crate::todos::{TodosEvent, TodosState};
+use crate::ui::dialog_motion;
 
 /// 新建 / 编辑共用的 Dialog 表单（每次打开为全新实体，对话框关闭即释放）。
 ///
@@ -236,16 +237,28 @@ impl TodosPage {
         let weak = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, window, cx| {
             let is_edit = form.read(cx).editing.is_some();
-            dialog
+            dialog_motion::kit_dialog(dialog)
                 .title(if is_edit {
                     "编辑待办"
                 } else {
                     "新建待办"
                 })
                 .width(px(380.))
+                .centered()
+                // 表单内的「指定时间区间」勾选框自行截获 Enter 切换勾选；
+                // 其余焦点位置 Enter 等价于点击「保存」。
+                .on_ok({
+                    let form = form.clone();
+                    let weak = weak.clone();
+                    move |_, window, cx| {
+                        submit_form(&form, &weak, window, cx);
+                        // 成功时 submit_form 已异步关闭弹窗；失败或内容为空则保持打开
+                        false
+                    }
+                })
                 .content({
                     let form = form.clone();
-                    move |content, _, cx| view::form_content(&form, content, cx)
+                    move |content, window, cx| view::form_content(&form, content, window, cx)
                 })
                 .footer(view::form_footer(&form, &weak, window, cx))
         });
@@ -301,5 +314,127 @@ fn submit_form(
         Ok(Err(err)) => window.push_notification(Notification::error(err.to_string()), cx),
         // 页面实体已释放（窗口关闭）：无处呈现，放弃
         Err(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui_kit::component::WindowExt as _;
+    use gpui_kit::component::dialog::Confirm;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, TestAppContext,
+        Window, WindowOptions, div,
+    };
+
+    use crate::ui::dialog_motion;
+
+    struct DialogProbe {
+        checkbox: FocusHandle,
+        other: FocusHandle,
+    }
+
+    impl Render for DialogProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full()
+        }
+    }
+
+    /// 勾选框聚焦时，Enter 由就近的 `Confirm` 处理器接手，不落到弹窗 `on_ok`；
+    /// 原生激活键已被 `Confirm` 吞掉，不应再次翻转。
+    #[gpui_kit::test]
+    fn enter_is_intercepted_by_focused_control_before_dialog_confirm(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let toggles = Rc::new(Cell::new(0));
+        let saves = Rc::new(Cell::new(0));
+        let activations = Rc::new(Cell::new(0));
+        let (handle, probe) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| DialogProbe {
+                    checkbox: cx.focus_handle(),
+                    other: cx.focus_handle(),
+                })
+            })
+            .unwrap()
+        });
+
+        cx.update_window(handle, {
+            let probe = probe.clone();
+            let toggles = toggles.clone();
+            let saves = saves.clone();
+            let activations = activations.clone();
+            move |_, window, cx| {
+                let checkbox = probe.read(cx).checkbox.clone();
+                let other = probe.read(cx).other.clone();
+                window.open_dialog(cx, move |dialog, _, _| {
+                    let checkbox = checkbox.clone();
+                    let other = other.clone();
+                    let toggles = toggles.clone();
+                    let saves = saves.clone();
+                    let activations = activations.clone();
+                    dialog_motion::kit_dialog(dialog)
+                        .on_ok(move |_, _, _| {
+                            saves.set(saves.get() + 1);
+                            false
+                        })
+                        .content(move |content, _, _| {
+                            let activations = activations.clone();
+                            content
+                                .child(
+                                    div()
+                                        .id("probe-guard")
+                                        .on_action({
+                                            let toggles = toggles.clone();
+                                            move |_: &Confirm, _, _| {
+                                                toggles.set(toggles.get() + 1);
+                                            }
+                                        })
+                                        .child(
+                                            div()
+                                                .id("probe-target")
+                                                .track_focus(&checkbox)
+                                                .on_click(move |_, _, _| {
+                                                    activations.set(activations.get() + 1);
+                                                }),
+                                        ),
+                                )
+                                .child(div().id("probe-outside").track_focus(&other))
+                        })
+                });
+                window.render_frame(cx);
+            }
+        })
+        .unwrap();
+
+        cx.update_window(handle, |_, window, cx| {
+            probe.read(cx).checkbox.clone().focus(window, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+
+        cx.simulate_keystrokes(handle, "enter");
+
+        assert_eq!(toggles.get(), 1, "Enter 由就近的勾选处理器接手");
+        assert_eq!(saves.get(), 0, "勾选框聚焦时 Enter 不应保存");
+        assert_eq!(
+            activations.get(),
+            0,
+            "Confirm 已吞掉原生激活键，不应重复翻转"
+        );
+
+        // 焦点不在勾选框时，Enter 落到弹窗 on_ok（等价于点击「保存」）。
+        cx.update_window(handle, |_, window, cx| {
+            probe.read(cx).other.clone().focus(window, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.simulate_keystrokes(handle, "enter");
+
+        assert_eq!(saves.get(), 1, "其他焦点位置 Enter 触发保存");
+        assert_eq!(toggles.get(), 1, "勾选框不再被翻转");
     }
 }

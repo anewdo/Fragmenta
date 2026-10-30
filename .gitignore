@@ -1,5 +1,6 @@
 /target
 .scratch/
+.claude/
 temp/
 
 AGENTS.md

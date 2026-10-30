@@ -13,7 +13,7 @@ use gpui_kit::base::{Calendar, CalendarItem, CalendarItemKind, CalendarItemState
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::dialog::DialogContent;
+use gpui_kit::component::dialog::{Confirm, DialogContent};
 use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
@@ -29,6 +29,7 @@ use gpui_kit::*;
 
 use super::{TodoForm, TodosPage};
 use crate::settings::SettingsStore;
+use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::tokens;
 
 /// 日历单元格边长：kit 默认 32 放大到 40（对齐 kit Large 档几何），
@@ -64,6 +65,7 @@ fn visible_date(year: i32, month: u8, day: u32, adjacent: bool) -> NaiveDate {
 pub(super) fn form_content(
     form: &Entity<TodoForm>,
     content: DialogContent,
+    window: &mut Window,
     cx: &mut App,
 ) -> DialogContent {
     let (has_interval, input, start, end) = {
@@ -75,23 +77,54 @@ pub(super) fn form_content(
             form.end.clone(),
         )
     };
+    let (content_border, start_border, end_border) = {
+        let theme = cx.theme();
+        (
+            input_border(theme, input.read(cx).focus_handle(cx).is_focused(window)),
+            input_border(theme, start.read(cx).focus_handle(cx).is_focused(window)),
+            input_border(theme, end.read(cx).focus_handle(cx).is_focused(window)),
+        )
+    };
     content.child(
         v_flex()
             .gap_2()
-            .child(Input::new(&input).id("todo-form-content").w_full())
+            .child(
+                Input::new(&input)
+                    .id("todo-form-content")
+                    .w_full()
+                    .text_field_focus(content_border),
+            )
             .child({
                 let form = form.clone();
-                Checkbox::new("todo-form-interval")
-                    .label("指定时间区间")
-                    .checked(has_interval)
-                    .on_change(move |value, _, cx| {
-                        // notify 触发对话框层重建：勾选视觉、TimeField 行显隐
-                        // 都由每帧重建的 builder 从表单实体重新读取
-                        form.update(cx, |form, cx| {
-                            form.has_interval = *value;
-                            cx.notify();
-                        });
+                // 勾选框聚焦时 Enter 只切换勾选：kit Dialog 的 Enter→Confirm
+                // 会在按键按下时吞掉原生激活键，故在此就近截获并自行翻转。
+                div()
+                    .id("todo-form-interval-hotkey")
+                    .on_action({
+                        let form = form.clone();
+                        move |_: &Confirm, _, cx| {
+                            form.update(cx, |form, cx| {
+                                form.has_interval = !form.has_interval;
+                                cx.notify();
+                            });
+                        }
                     })
+                    .child(
+                        Checkbox::new("todo-form-interval")
+                            .label("指定时间区间")
+                            .checked(has_interval)
+                            .on_change({
+                                let form = form.clone();
+                                move |value, _, cx| {
+                                    // notify 触发对话框层重建：勾选视觉、TimeField 行显隐
+                                    // 都由每帧重建的 builder 从表单实体重新读取
+                                    form.update(cx, |form, cx| {
+                                        form.has_interval = *value;
+                                        cx.notify();
+                                    });
+                                }
+                            }),
+                    )
             })
             .when(has_interval, |el| {
                 el.child(
@@ -99,8 +132,12 @@ pub(super) fn form_content(
                         .id("todo-form-interval-row")
                         .test_support()
                         .gap_2()
-                        .child(TimeField::new(&start).flex_1())
-                        .child(TimeField::new(&end).flex_1()),
+                        .child(
+                            TimeField::new(&start)
+                                .flex_1()
+                                .text_field_focus(start_border),
+                        )
+                        .child(TimeField::new(&end).flex_1().text_field_focus(end_border)),
                 )
             }),
     )

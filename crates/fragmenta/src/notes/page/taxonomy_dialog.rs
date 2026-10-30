@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::time::Duration;
 
 use fragmenta_core::db::Result as DbResult;
 use fragmenta_core::model::Note;
@@ -15,7 +14,6 @@ use fragmenta_core::model::Note;
 use gpui_kit::assets::IconName;
 use gpui_kit::base::Dialog;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::notification::Notification;
@@ -24,6 +22,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
+use crate::ui::dialog_motion::DialogMotion;
+use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
 use crate::widgets::tag_badge::tag_outline_chip;
 
@@ -31,8 +31,6 @@ use crate::widgets::tag_badge::tag_outline_chip;
 const MODAL_PADDING: Pixels = px(20.);
 /// 弹窗卡片圆角（rounded-xl）
 const MODAL_RADIUS: Pixels = px(12.);
-/// 打开 / 关闭动画时长（duration-200）
-const MODAL_ANIM: Duration = Duration::from_millis(200);
 
 /// 弹窗阶段：关闭动画期间仍保持挂载，计时结束才真正移除。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -105,7 +103,11 @@ impl NotesPage {
     }
 
     /// 渲染弹窗（无弹窗时返回 None）。
-    pub(super) fn render_taxonomy_modal(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_taxonomy_modal(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let modal = self.taxonomy_modal.as_ref()?;
         let theme = cx.theme().clone();
         let muted = theme.muted_foreground;
@@ -113,21 +115,29 @@ impl NotesPage {
         let focus = modal.focus.clone();
         let closing = modal.phase == ModalPhase::Closing;
         let seq = modal.seq;
-        let (from, to) = if closing { (1., 0.) } else { (0., 1.) };
-        let (slide_from, slide_to) = if closing {
-            (px(0.), px(6.))
-        } else {
-            (px(6.), px(0.))
-        };
+        let motion = DialogMotion::for_window(window, cx);
+        let (category_border, tag_border) = (
+            input_border(
+                &theme,
+                modal
+                    .category_input
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window),
+            ),
+            input_border(
+                &theme,
+                modal.tag_input.read(cx).focus_handle(cx).is_focused(window),
+            ),
+        );
         let phase = if closing { "close" } else { "open" };
         let weak = cx.entity().downgrade();
 
-        // 遮罩：黑 40%，随阶段淡入淡出
-        let backdrop = EffectTransition::new(MODAL_ANIM)
-            .ease(ease_out_cubic)
-            .fade(from, to)
+        // 遮罩：与 kit Dialog 共用主题 overlay，随阶段淡入淡出
+        let backdrop = motion
+            .backdrop(!closing)
             .apply(
-                div().absolute().size_full().bg(hsla(0., 0., 0., 0.4)),
+                div().absolute().size_full().bg(theme.overlay),
                 format!("taxonomy-backdrop-{phase}-{seq}"),
             )
             .into_any_element();
@@ -299,7 +309,11 @@ impl NotesPage {
                     .child(
                         div()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(Input::new(&category_input).w_full()),
+                            .child(
+                                Input::new(&category_input)
+                                    .w_full()
+                                    .text_field_focus(category_border),
+                            ),
                     ),
             )
             .child(
@@ -322,7 +336,11 @@ impl NotesPage {
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
-                                    .child(Input::new(&tag_input).w_full()),
+                                    .child(
+                                        Input::new(&tag_input)
+                                            .w_full()
+                                            .text_field_focus(tag_border),
+                                    ),
                             )
                             .child(add_tag),
                     )
@@ -376,10 +394,8 @@ impl NotesPage {
             .child(body)
             .child(footer);
 
-        let card = EffectTransition::new(MODAL_ANIM)
-            .ease(ease_out_cubic)
-            .slide_y(slide_from, slide_to)
-            .fade(from, to)
+        let card = motion
+            .card(!closing)
             .apply(card, format!("taxonomy-card-{phase}-{seq}"))
             .into_any_element();
 
@@ -407,10 +423,11 @@ impl NotesPage {
         modal.seq = modal.seq.wrapping_add(1);
         let seq = modal.seq;
         cx.notify();
+        let duration = DialogMotion::for_window(window, cx).duration();
 
         let weak = cx.entity().downgrade();
         cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor().timer(MODAL_ANIM).await;
+            cx.background_executor().timer(duration).await;
             let _ = weak.update_in(cx, |this, window, cx| {
                 if this
                     .taxonomy_modal

@@ -21,6 +21,7 @@ use crate::notes::NotesStore;
 use crate::notes::editor::NoteEditor;
 use crate::notes::{NoteKey, NotesEvent, NotesState};
 use crate::taxonomy::{TaxonomyEvent, TaxonomyStore};
+use crate::ui::dialog_motion;
 use crate::utils::palette::parse_hex_color;
 
 use filter_panel::FilterPanel;
@@ -261,12 +262,12 @@ impl NotesPage {
         let weak = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let weak = weak.clone();
-            alert
-                .confirm()
+            dialog_motion::alert_dialog(alert.confirm())
                 .title("删除笔记")
                 .description("删除后无法恢复，确定要删除这条笔记吗？")
                 .ok_text("删除")
                 .ok_variant(ButtonVariant::Danger)
+                .centered()
                 .cancel_text("取消")
                 .on_ok(move |_, window, cx| {
                     weak.update(cx, |this, cx| {

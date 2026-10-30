@@ -7,7 +7,6 @@ use chrono::{DateTime, Local};
 use fragmenta_core::model::{Note, NoteSort};
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::FocusableExt as _;
 use gpui_kit::component::animation::{EffectTransition, ease_out_cubic};
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::empty::{
@@ -23,6 +22,7 @@ use gpui_kit::*;
 
 use super::NotesPage;
 use crate::settings::SettingsStore;
+use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::tokens::{self, TextRole};
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
@@ -40,8 +40,6 @@ const CARD_SELECTION_BAR: Pixels = px(3.);
 const CARD_ACTION_FADE: Duration = Duration::from_millis(120);
 /// 两个 32px 操作按钮及其间距占用的宽度。
 const CARD_ACTIONS_WIDTH: Pixels = px(68.);
-/// 搜索框聚焦描边不透明度：替代 kit 的 3px 焦点环，避免粗重阴影感。
-const SEARCH_FOCUS_BORDER_OPACITY: f32 = 0.6;
 
 /// 创建时间的相对文案：一周内按刚刚 / 分钟 / 小时 / 天，更早显示日期。
 fn relative_created_at(created_at: DateTime<Local>) -> String {
@@ -379,12 +377,9 @@ impl Render for NotesPage {
             let theme = cx.theme();
             (theme.muted_foreground, theme.danger)
         };
-        let (input_border, focus_border) = {
+        let (input_border_color, focus_border_color) = {
             let theme = cx.theme();
-            (
-                theme.input,
-                theme.primary.opacity(SEARCH_FOCUS_BORDER_OPACITY),
-            )
+            (input_border(theme, false), input_border(theme, true))
         };
         let search_border = if self
             .query_input
@@ -392,9 +387,9 @@ impl Render for NotesPage {
             .focus_handle(cx)
             .is_focused(window)
         {
-            focus_border
+            focus_border_color
         } else {
-            input_border
+            input_border_color
         };
         // 列表卡片使用固定字号，不随编辑器字号缩放
         let notes_list_width = cx.global::<SettingsStore>().0.read(cx).notes_list_width();
@@ -418,9 +413,7 @@ impl Render for NotesPage {
                     Input::new(&self.query_input)
                         .with_size(Size::Medium)
                         .w_full()
-                        // 去掉 kit 的 3px 焦点环，改用 1px 淡主色描边
-                        .focus_ring(false)
-                        .border_color(search_border)
+                        .text_field_focus(search_border)
                         .prefix(Icon::new(IconName::Search).with_size(Size::XSmall))
                         .suffix(self.filter_popover(&weak)),
                 ),
@@ -550,6 +543,8 @@ impl Render for NotesPage {
                 ),
             )
             // 弹窗挂最后：无样式 Dialog 走 deferred 图层，覆盖整个窗口
-            .when_some(self.render_taxonomy_modal(cx), |el, modal| el.child(modal))
+            .when_some(self.render_taxonomy_modal(window, cx), |el, modal| {
+                el.child(modal)
+            })
     }
 }
