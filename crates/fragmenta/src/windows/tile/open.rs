@@ -11,6 +11,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::settings::SettingsStore;
+use crate::windows::monitor::{clamp_to_display, display_containing};
 
 use super::{CASCADE, MIN_H, MIN_W, view::TileView};
 
@@ -43,7 +44,7 @@ pub fn open_new(cx: &mut App) {
                 b.origin.x + b.size.width * 0.5,
                 b.origin.y + b.size.height * 0.5,
             );
-            monitor_containing(cx, center).map(|(monitor, display_id)| {
+            display_containing(cx, center).map(|(monitor, display_id)| {
                 (
                     b.origin.x.as_f32(),
                     b.origin.y.as_f32(),
@@ -58,12 +59,12 @@ pub fn open_new(cx: &mut App) {
     let cursor = crate::win32::cursor_placement();
     let (origin, display_id) = if let Some((x, y, monitor, display_id)) = cascade_from {
         (
-            clamp_to_monitor(monitor, x + CASCADE, y + CASCADE, tile_w, tile_h),
+            clamp_to_display(monitor, x + CASCADE, y + CASCADE, tile_w, tile_h),
             display_id,
         )
     } else if let Some(p) = cursor.as_ref() {
         (
-            clamp_to_monitor(
+            clamp_to_display(
                 p.monitor,
                 p.cursor.0 - tile_w * 0.5,
                 p.cursor.1 - tile_h * 0.5,
@@ -106,38 +107,4 @@ pub fn open_new(cx: &mut App) {
         }),
         Err(err) => eprintln!("[fragmenta] 打开磁贴失败: {err:?}"),
     }
-}
-
-/// 反查包含指定点（全局逻辑坐标）的显示器：返回其逻辑 bounds 与 id。
-///
-/// 级联定位与光标定位同样须绑定所在显示器 id（§9 条目 5）。
-fn monitor_containing(cx: &App, p: Point<Pixels>) -> Option<((f32, f32, f32, f32), u64)> {
-    cx.displays().iter().find_map(|display| {
-        let b = display.bounds();
-        let inside = p.x >= b.origin.x
-            && p.y >= b.origin.y
-            && p.x <= b.origin.x + b.size.width
-            && p.y <= b.origin.y + b.size.height;
-        inside.then(|| {
-            (
-                (
-                    b.origin.x.as_f32(),
-                    b.origin.y.as_f32(),
-                    b.size.width.as_f32(),
-                    b.size.height.as_f32(),
-                ),
-                u64::from(display.id()),
-            )
-        })
-    })
-}
-
-/// 窗口左上角钳制在显示器内（完整可见；显示器小于窗口时贴左上角）。
-/// `w` / `h` 为本次打开的窗口尺寸（钳制范围随记忆尺寸变化）。
-fn clamp_to_monitor(monitor: (f32, f32, f32, f32), x: f32, y: f32, w: f32, h: f32) -> (f32, f32) {
-    let (bx, by, bw, bh) = monitor;
-    (
-        x.clamp(bx, (bx + bw - w).max(bx)),
-        y.clamp(by, (by + bh - h).max(by)),
-    )
 }

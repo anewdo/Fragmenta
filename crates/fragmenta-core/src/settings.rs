@@ -49,6 +49,15 @@ pub struct LayoutSettings {
     /// 后更新；默认值即磁贴初始尺寸。
     pub tile_width: f32,
     pub tile_height: f32,
+    /// 主窗口上次关闭时的左上角（逻辑像素）：下次打开沿用；`None` 时居中。
+    pub main_window_origin: Option<WindowOrigin>,
+}
+
+/// 窗口左上角（逻辑像素），仅用于持久化窗口位置。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowOrigin {
+    pub x: f32,
+    pub y: f32,
 }
 
 impl Default for LayoutSettings {
@@ -59,6 +68,7 @@ impl Default for LayoutSettings {
             editor_source_width: 360.,
             tile_width: 300.,
             tile_height: 360.,
+            main_window_origin: None,
         }
     }
 }

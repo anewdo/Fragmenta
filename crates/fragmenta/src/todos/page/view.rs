@@ -4,7 +4,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use chrono::{Datelike, NaiveDate, Weekday};
+use chrono::{NaiveDate, Weekday};
 
 use fragmenta_core::model::Todo;
 
@@ -31,6 +31,7 @@ use super::{TodoForm, TodosPage};
 use crate::settings::SettingsStore;
 use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::tokens;
+use crate::utils::time;
 
 /// 日历单元格边长：kit 默认 32 放大到 40（对齐 kit Large 档几何），
 /// 为右上角圆点留出空间。
@@ -302,11 +303,7 @@ impl TodosPage {
                         .text_size(px(12.))
                         .text_color(muted)
                         .when(done, |el| el.line_through())
-                        .child(format!(
-                            "{} 至 {}",
-                            start.format("%H:%M"),
-                            end.format("%H:%M")
-                        )),
+                        .child(time::todo_interval_label(start, end)),
                 )
             })
             .into_any_element()
@@ -314,20 +311,7 @@ impl TodosPage {
 
     /// 副标题日期文案：`10月11日 周六`。
     fn date_subtitle(&self) -> String {
-        let weekday = match self.selected.weekday().num_days_from_monday() {
-            0 => "周一",
-            1 => "周二",
-            2 => "周三",
-            3 => "周四",
-            4 => "周五",
-            5 => "周六",
-            _ => "周日",
-        };
-        format!(
-            "{}月{}日 {weekday}",
-            self.selected.month(),
-            self.selected.day()
-        )
+        time::date_label(self.selected)
     }
 
     /// 左日历卡：base 层承载全部交互（点选 / 翻月 / 月年选择 / 键盘），
@@ -357,18 +341,9 @@ impl TodosPage {
         .first_day_of_week(Weekday::Mon)
         .label(move |kind: CalendarItemKind, value: i32| -> SharedString {
             match kind {
-                // 星期序号 0 = 周日 … 6 = 周六（base 的传值约定）
-                CalendarItemKind::Weekday => match value {
-                    0 => "日".into(),
-                    1 => "一".into(),
-                    2 => "二".into(),
-                    3 => "三".into(),
-                    4 => "四".into(),
-                    5 => "五".into(),
-                    _ => "六".into(),
-                },
+                CalendarItemKind::Weekday => time::calendar_weekday_label(value).into(),
                 CalendarItemKind::Month | CalendarItemKind::MonthToggle => {
-                    format!("{value}月").into()
+                    time::month_label(value).into()
                 }
                 CalendarItemKind::Day => {
                     label_day.set(value as u32);

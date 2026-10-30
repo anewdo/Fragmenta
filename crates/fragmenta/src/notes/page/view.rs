@@ -3,7 +3,6 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Local};
 use fragmenta_core::model::{Note, NoteSort};
 
 use gpui_kit::assets::IconName;
@@ -23,7 +22,9 @@ use gpui_kit::*;
 use super::NotesPage;
 use crate::settings::SettingsStore;
 use crate::ui::focus::{TextFieldExt as _, input_border};
+use crate::ui::note_list;
 use crate::ui::tokens::{self, TextRole};
+use crate::utils::time;
 use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
 
 /// 卡片摘要最多显示行数（超出以省略号截断）。
@@ -40,26 +41,6 @@ const CARD_SELECTION_BAR: Pixels = px(3.);
 const CARD_ACTION_FADE: Duration = Duration::from_millis(120);
 /// 两个 32px 操作按钮及其间距占用的宽度。
 const CARD_ACTIONS_WIDTH: Pixels = px(68.);
-
-/// 创建时间的相对文案：一周内按刚刚 / 分钟 / 小时 / 天，更早显示日期。
-fn relative_created_at(created_at: DateTime<Local>) -> String {
-    relative_at(created_at, Local::now())
-}
-
-fn relative_at(created_at: DateTime<Local>, now: DateTime<Local>) -> String {
-    let seconds = now.signed_duration_since(created_at).num_seconds();
-    if seconds < 60 {
-        "刚刚".to_string()
-    } else if seconds < 60 * 60 {
-        format!("{} 分钟前", seconds / 60)
-    } else if seconds < 60 * 60 * 24 {
-        format!("{} 小时前", seconds / 60 / 60)
-    } else if seconds < 60 * 60 * 24 * 7 {
-        format!("{} 天前", seconds / 60 / 60 / 24)
-    } else {
-        created_at.format("%Y-%m-%d").to_string()
-    }
-}
 
 impl NotesPage {
     /// 排序下拉：按更新时间 / 按创建时间 / 按名称。
@@ -151,7 +132,7 @@ impl NotesPage {
             note.title.clone()
         };
         let summary = note.summary();
-        let created = relative_created_at(note.created_at);
+        let created = time::relative_created_at(note.created_at);
         let theme = cx.theme();
         // Fluent Light 卡片：白色列表底 + 极浅描边，悬停时描边加深；深色主题
         // 沿用 secondary 面与常规描边（list 底与页面同色，会失去卡片轮廓）。
@@ -289,16 +270,7 @@ impl NotesPage {
                     .relative()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(CARD_TITLE_FONT)
-                            .font_weight(TextRole::DocumentTitle.weight())
-                            .line_height(TextRole::DocumentTitle.line_height())
-                            .child(title),
-                    )
+                    .child(note_list::note_title(title, CARD_TITLE_FONT))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -317,16 +289,12 @@ impl NotesPage {
             )
             // 中部：摘要（多行截断；空正文时省略）
             .when(!summary.is_empty(), |el| {
-                el.child(
-                    div()
-                        .w_full()
-                        .text_size(CARD_SUMMARY_FONT)
-                        .line_height(TextRole::Reading.line_height())
-                        .text_color(muted)
-                        .line_clamp(CARD_SUMMARY_LINES)
-                        .text_ellipsis()
-                        .child(summary),
-                )
+                el.child(note_list::note_summary(
+                    summary,
+                    CARD_SUMMARY_LINES,
+                    CARD_SUMMARY_FONT,
+                    muted,
+                ))
             })
             // 底部：左侧平铺标签 + 右侧相对创建时间
             .child(
@@ -350,23 +318,6 @@ impl NotesPage {
                             .child(created),
                     ),
             )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::relative_at;
-    use chrono::{Duration, Local};
-
-    #[test]
-    fn relative_time_uses_readable_buckets() {
-        let now = Local::now();
-        assert_eq!(relative_at(now - Duration::seconds(5), now), "刚刚");
-        assert_eq!(relative_at(now - Duration::minutes(5), now), "5 分钟前");
-        assert_eq!(relative_at(now - Duration::hours(3), now), "3 小时前");
-        assert_eq!(relative_at(now - Duration::days(3), now), "3 天前");
-        let old = now - Duration::days(30);
-        assert_eq!(relative_at(old, now), old.format("%Y-%m-%d").to_string());
     }
 }
 

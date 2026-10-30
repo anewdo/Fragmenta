@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fragmenta_core::db::Db;
-use fragmenta_core::settings::{self, Settings, ThemeMode};
+use fragmenta_core::settings::{self, Settings, ThemeMode, WindowOrigin};
 use global_hotkey::hotkey::HotKey;
 use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode};
 use gpui_kit::{
-    Context, Entity, EventEmitter, Global, Pixels, Subscription, Task, Window, WindowAppearance, px,
+    Context, Entity, EventEmitter, Global, Pixels, Point, Subscription, Task, Window,
+    WindowAppearance, point, px,
 };
 
 use crate::autostart::AutostartError;
@@ -37,29 +38,29 @@ pub struct SettingsState {
     /// 共享数据库门面（与 notes / todos store 同一 `Arc<Db>`），
     /// 供 `set_data_dir` 迁移编排在线备份与连接热替换。
     db: Arc<Db>,
-    /// 磁贴尺寸防抖写盘任务；`None` 即无待写内容。
-    tile_persist: Option<Task<()>>,
-    /// 应用退出兜底：退出前落盘未到期的磁贴尺寸。
+    /// 窗口几何（磁贴尺寸 / 主窗口位置）防抖写盘任务；`None` 即无待写内容。
+    bounds_persist: Option<Task<()>>,
+    /// 应用退出兜底：退出前落盘未到期的窗口几何。
     _quit_sub: Subscription,
 }
 
-/// 磁贴尺寸写盘防抖 原生 resize 拖拽期间 WM_SIZE
-/// 连续触发 bounds 观察，落盘按此窗口合并为拖拽结束后的最后一次。
-const TILE_SIZE_DEBOUNCE: Duration = Duration::from_millis(400);
+/// 窗口几何写盘防抖：原生拖动 / resize 期间 bounds 观察连续触发，
+/// 落盘按此窗口合并为拖拽结束后的最后一次。
+const BOUNDS_PERSIST_DEBOUNCE: Duration = Duration::from_millis(400);
 
 impl SettingsState {
     /// 构造即按当前设置应用主题模式（启动期主题应用唯一入口）。
     pub fn new(settings: Settings, path: PathBuf, db: Arc<Db>, cx: &mut Context<Self>) -> Self {
         theme::init(cx);
         let quit_sub = cx.on_app_quit(|state, _| {
-            state.flush_tile_persist();
+            state.flush_bounds_persist();
             async {}
         });
         let mut state = Self {
             settings,
             path,
             db,
-            tile_persist: None,
+            bounds_persist: None,
             _quit_sub: quit_sub,
         };
         state.apply_theme_mode(cx);
@@ -142,15 +143,44 @@ impl SettingsState {
         }
         self.settings.layout.tile_width = w;
         self.settings.layout.tile_height = h;
-        self.tile_persist = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(TILE_SIZE_DEBOUNCE).await;
-            let _ = this.update(cx, |state, _| state.flush_tile_persist());
+        self.schedule_bounds_persist(cx);
+    }
+
+    /// 主窗口上次关闭时的左上角（逻辑像素）；未记录返回 `None`。
+    pub fn main_window_origin(&self) -> Option<Point<Pixels>> {
+        self.settings
+            .layout
+            .main_window_origin
+            .map(|origin| point(px(origin.x), px(origin.y)))
+    }
+
+    /// 记录主窗口当前位置（主窗口 bounds 观察回调提交），防抖写盘。
+    /// 拖动与 resize 都会触发，同值提交直接跳过。
+    pub fn set_main_window_origin(&mut self, origin: Point<Pixels>, cx: &mut Context<Self>) {
+        let next = WindowOrigin {
+            x: origin.x.as_f32(),
+            y: origin.y.as_f32(),
+        };
+        if self.settings.layout.main_window_origin == Some(next) {
+            return;
+        }
+        self.settings.layout.main_window_origin = Some(next);
+        self.schedule_bounds_persist(cx);
+    }
+
+    /// 合并窗口几何写盘：重置防抖计时，到期后一次性落盘。
+    fn schedule_bounds_persist(&mut self, cx: &mut Context<Self>) {
+        self.bounds_persist = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(BOUNDS_PERSIST_DEBOUNCE)
+                .await;
+            let _ = this.update(cx, |state, _| state.flush_bounds_persist());
         }));
     }
 
-    /// 磁贴尺寸立即落盘（防抖到期 / 应用退出兜底）：有待写任务才写。
-    fn flush_tile_persist(&mut self) {
-        if self.tile_persist.take().is_some() {
+    /// 窗口几何立即落盘（防抖到期 / 应用退出兜底）：有待写任务才写。
+    fn flush_bounds_persist(&mut self) {
+        if self.bounds_persist.take().is_some() {
             self.persist();
         }
     }
@@ -375,10 +405,10 @@ mod tests {
     use super::*;
     use gpui_kit::{AppContext as _, TestAppContext, rgb};
 
-    /// 磁贴尺寸记忆：内存即时生效，落盘按防抖窗口合并；到期后新进程
-    /// 从 settings.json 读到调整后的尺寸。
+    /// 窗口几何记忆（磁贴尺寸 / 主窗口位置）：内存即时生效，落盘按防抖
+    /// 窗口合并；到期后新进程从 settings.json 读到调整后的值。
     #[gpui_kit::test]
-    fn tile_size_persists_after_debounce_and_reloads(cx: &mut TestAppContext) {
+    fn window_geometry_persists_after_debounce_and_reloads(cx: &mut TestAppContext) {
         cx.update(gpui_kit::component::theme::init);
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../temp/tests")
@@ -399,6 +429,8 @@ mod tests {
             // 同值提交（拖动 / scale 变化不改逻辑尺寸）跳过
             state.set_tile_size(px(420.), px(560.), cx);
             assert_eq!(state.tile_size(), (px(420.), px(560.)));
+            state.set_main_window_origin(point(px(120.), px(80.)), cx);
+            assert_eq!(state.main_window_origin(), Some(point(px(120.), px(80.))));
         });
         // 防抖未到期：磁盘仍为默认值
         assert_eq!(
@@ -406,12 +438,16 @@ mod tests {
             defaults.tile_width
         );
         cx.executor().run_until_parked();
-        cx.executor().advance_clock(TILE_SIZE_DEBOUNCE);
+        cx.executor().advance_clock(BOUNDS_PERSIST_DEBOUNCE);
         cx.executor().run_until_parked();
-        // 到期落盘：重载（新进程）读到记忆尺寸
+        // 到期落盘：重载（新进程）读到记忆尺寸与主窗口位置
         let reloaded = Settings::load(&path).unwrap();
         assert_eq!(reloaded.layout.tile_width, 420.);
         assert_eq!(reloaded.layout.tile_height, 560.);
+        assert_eq!(
+            reloaded.layout.main_window_origin,
+            Some(WindowOrigin { x: 120., y: 80. })
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

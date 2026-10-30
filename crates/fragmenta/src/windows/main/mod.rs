@@ -16,6 +16,7 @@ use crate::ui::layout::LayoutClass;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{ToastState, ToastStore};
 use crate::widgets::window_title_bar;
+use crate::windows::monitor::{clamp_to_display, display_containing};
 
 /// 侧栏展开 / 收起宽度动画时长
 const SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(200);
@@ -71,13 +72,10 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
         }
     }
 
-    let bounds = Bounds::centered(
-        None,
-        size(tokens::widths::MAIN_WINDOW, tokens::heights::MAIN_WINDOW),
-        cx,
-    );
+    let (bounds, display_id) = initial_bounds(cx);
     let mut options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id,
         window_min_size: Some(size(
             tokens::widths::MAIN_WINDOW_MIN,
             tokens::heights::MAIN_WINDOW_MIN,
@@ -118,6 +116,36 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
     }
 }
 
+/// 主窗口初始 bounds：有记忆位置则沿用，并按所在显示器钳制（同时绑定
+/// 该显示器 id，后端才按目标显示器 scale 换算坐标）；无记录、或记录点
+/// 已不在任何显示器上（显示器布局变化）时居中主显示器。
+fn initial_bounds(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
+    let window_size = size(tokens::widths::MAIN_WINDOW, tokens::heights::MAIN_WINDOW);
+    let origin = cx
+        .try_global::<crate::settings::SettingsStore>()
+        .and_then(|store| store.0.read(cx).main_window_origin());
+    let Some(origin) = origin else {
+        return (Bounds::centered(None, window_size, cx), None);
+    };
+    let Some((display, display_id)) = display_containing(cx, origin) else {
+        return (Bounds::centered(None, window_size, cx), None);
+    };
+    let (x, y) = clamp_to_display(
+        display,
+        origin.x.as_f32(),
+        origin.y.as_f32(),
+        window_size.width.as_f32(),
+        window_size.height.as_f32(),
+    );
+    (
+        Bounds {
+            origin: point(px(x), px(y)),
+            size: window_size,
+        },
+        Some(DisplayId::new(display_id)),
+    )
+}
+
 /// 主窗口 shell：自绘标题栏 + 侧栏导航（可拖宽 / 可收起，带动画）+
 /// 三页常驻 Entity 路由。
 struct MainShell {
@@ -140,6 +168,7 @@ struct MainShell {
     toast: Entity<ToastState>,
     _appearance_sub: Subscription,
     _toast_sub: Subscription,
+    _bounds_sub: Subscription,
 }
 
 impl MainShell {
@@ -158,6 +187,18 @@ impl MainShell {
                 return false;
             }
             true
+        });
+        // 位置记忆：拖动 / resize / 跨屏后把左上角提交设置层（防抖落盘）。
+        // 取 `window_bounds` 的客户区坐标（与打开时写入的值同一坐标系）；
+        // 最大化 / 全屏不是用户摆放的位置，跳过以保留还原后的位置。
+        let bounds_sub = cx.observe_window_bounds(window, |_, window, cx| {
+            let WindowBounds::Windowed(bounds) = window.window_bounds() else {
+                return;
+            };
+            let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+            settings.update(cx, |state, cx| {
+                state.set_main_window_origin(bounds.origin, cx)
+            });
         });
         let toast = cx.global::<ToastStore>().0.clone();
         let toast_sub = cx.observe(&toast, |_, _, cx| cx.notify());
@@ -187,6 +228,7 @@ impl MainShell {
             toast,
             _appearance_sub: appearance_sub,
             _toast_sub: toast_sub,
+            _bounds_sub: bounds_sub,
         }
     }
 
