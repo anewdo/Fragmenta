@@ -6,7 +6,7 @@ use fragmenta_core::settings::{FONT_SIZE_MAX_PX, FONT_SIZE_MIN_PX, ThemeMode};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -741,8 +741,8 @@ fn mock_preview(colors: MockColors, chrome_w: Pixels, title_h: Pixels) -> Div {
 }
 
 /// 缩略图读取实际主题定义，与窗口及开发重载保持一致。
-fn theme_mock(mode: KitThemeMode, cx: &App) -> MockColors {
-    let theme = theme::preview(mode, cx);
+fn theme_mock(theme: ThemeMode, cx: &App) -> MockColors {
+    let theme = theme::preview(theme, cx);
     MockColors {
         chrome: theme.sidebar,
         title: theme.title_bar,
@@ -769,7 +769,7 @@ fn theme_section(
                     div()
                         .text_role(TextRole::Meta)
                         .text_color(muted)
-                        .child("切换即时生效于全部窗口；Auto 跟随系统深浅色"),
+                        .child("切换即时生效于全部窗口；自动仅在浅色 / 深色之间跟随系统"),
                 ),
         )
         .child(
@@ -777,43 +777,63 @@ fn theme_section(
                 .gap(tokens::spacing::MD)
                 .flex_wrap()
                 .child(theme_swatch(
-                    "theme-pick-light",
-                    "Light",
-                    theme == ThemeMode::Light,
-                    ThemeMode::Light,
-                    mock_preview(theme_mock(KitThemeMode::Light, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
-                ))
-                .child(theme_swatch(
-                    "theme-pick-dark",
-                    "Dark",
-                    theme == ThemeMode::Dark,
-                    ThemeMode::Dark,
-                    mock_preview(theme_mock(KitThemeMode::Dark, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
-                ))
-                .child(theme_swatch(
                     "theme-pick-auto",
-                    "Auto",
+                    "自动",
                     theme == ThemeMode::Auto,
                     ThemeMode::Auto,
                     // 左半 Light / 右半 Dark：跟随系统深浅色的双色预览
                     h_flex()
                         .size_full()
                         .child(
-                            mock_preview(theme_mock(KitThemeMode::Light, cx), px(9.), px(10.))
+                            mock_preview(theme_mock(ThemeMode::Light, cx), px(9.), px(10.))
                                 .flex_1()
                                 .min_w_0(),
                         )
                         .child(
-                            mock_preview(theme_mock(KitThemeMode::Dark, cx), px(9.), px(10.))
+                            mock_preview(theme_mock(ThemeMode::Dark, cx), px(9.), px(10.))
                                 .flex_1()
                                 .min_w_0(),
                         ),
+                    primary,
+                    border,
+                    muted,
+                ))
+                .child(theme_swatch(
+                    "theme-pick-light",
+                    "浅色",
+                    theme == ThemeMode::Light,
+                    ThemeMode::Light,
+                    mock_preview(theme_mock(ThemeMode::Light, cx), px(18.), px(12.)),
+                    primary,
+                    border,
+                    muted,
+                ))
+                .child(theme_swatch(
+                    "theme-pick-dark",
+                    "深色",
+                    theme == ThemeMode::Dark,
+                    ThemeMode::Dark,
+                    mock_preview(theme_mock(ThemeMode::Dark, cx), px(18.), px(12.)),
+                    primary,
+                    border,
+                    muted,
+                ))
+                .child(theme_swatch(
+                    "theme-pick-literary-green",
+                    "绿色",
+                    theme == ThemeMode::LiteraryGreen,
+                    ThemeMode::LiteraryGreen,
+                    mock_preview(theme_mock(ThemeMode::LiteraryGreen, cx), px(18.), px(12.)),
+                    primary,
+                    border,
+                    muted,
+                ))
+                .child(theme_swatch(
+                    "theme-pick-ceramic",
+                    "橙色",
+                    theme == ThemeMode::Ceramic,
+                    ThemeMode::Ceramic,
+                    mock_preview(theme_mock(ThemeMode::Ceramic, cx), px(18.), px(12.)),
                     primary,
                     border,
                     muted,

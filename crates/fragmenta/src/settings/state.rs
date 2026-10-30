@@ -370,18 +370,14 @@ impl SettingsState {
         }
         let mode = kit_mode_of(appearance);
         if cx.theme().mode != mode {
-            theme::apply(mode, cx);
+            theme::apply(ThemeMode::Auto, mode, cx);
         }
     }
 
     /// 按设置加载内置 JSON；Auto 解析为当前系统外观。
     fn apply_theme_mode(&mut self, cx: &mut Context<Self>) {
-        let mode = match self.settings.theme {
-            ThemeMode::Light => KitThemeMode::Light,
-            ThemeMode::Dark => KitThemeMode::Dark,
-            ThemeMode::Auto => kit_mode_of(cx.window_appearance()),
-        };
-        theme::apply(mode, cx);
+        let system = kit_mode_of(cx.window_appearance());
+        theme::apply(self.settings.theme, system, cx);
     }
 
     /// 持久化到 settings.json；失败不中断交互（eprintln 容错，与项目现状一致）。

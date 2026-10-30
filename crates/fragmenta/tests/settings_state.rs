@@ -11,7 +11,7 @@ use common::TempDir;
 use fragmenta::settings::{SettingsEvent, SettingsState};
 use fragmenta_core::settings::{Settings, ThemeMode};
 use gpui_kit::component::{ActiveTheme as _, ThemeMode as KitThemeMode};
-use gpui_kit::{AppContext as _, Entity, TestAppContext, px};
+use gpui_kit::{AppContext as _, Entity, TestAppContext, px, rgb};
 
 /// 订阅设置广播并收集为序列。
 fn track_events(
@@ -53,6 +53,31 @@ fn set_theme_persists_broadcasts_and_applies(cx: &mut TestAppContext) {
     assert_eq!(*events.borrow(), vec![SettingsEvent::Changed]);
     assert_eq!(cx.update(|cx| cx.theme().mode), KitThemeMode::Dark);
     assert_eq!(Settings::load(&path).unwrap().theme, ThemeMode::Dark);
+}
+
+/// set_theme 切换到色系主题：以浅色模式生效、落盘 + 广播。
+#[gpui_kit::test]
+fn set_theme_color_theme_applies_as_light(cx: &mut TestAppContext) {
+    let dir = TempDir::new("settings-state-color-theme");
+    let path = dir.path().join("settings.json");
+    let state = new_state(Settings::default(), &path, cx);
+    let events = track_events(&state, cx);
+
+    state.update(cx, |state, cx| {
+        state.set_theme(ThemeMode::LiteraryGreen, cx)
+    });
+
+    let theme = state.read_with(cx, |state, _| state.theme());
+    assert_eq!(theme, ThemeMode::LiteraryGreen);
+    assert_eq!(*events.borrow(), vec![SettingsEvent::Changed]);
+    cx.update(|cx| {
+        assert_eq!(cx.theme().mode, KitThemeMode::Light);
+        assert_eq!(cx.theme().background, rgb(0xF4F1EA).into());
+    });
+    assert_eq!(
+        Settings::load(&path).unwrap().theme,
+        ThemeMode::LiteraryGreen
+    );
 }
 
 /// set_editor_font_px：落盘 + 广播一次 + 访问器像素映射（重启读路径保留）。

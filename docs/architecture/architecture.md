@@ -1,7 +1,7 @@
 # Fragmenta 架构设计
 
-> 状态：定案（2026-10-05；2026-10-06 spike 结论回写；2026-10-12 设置页定案回写；2026-10-18 功能模块组织调整）
-> 技术基线：Rust (edition 2024) · gpui-kit 0.7.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
+> 状态：定案（2026-10-18 功能模块组织调整）
+> 技术基线：Rust (edition 2024) · gpui-kit 0.8.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
 > 形态：单进程多窗口桌面应用，无后台服务，轻量低内存
 > 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 分类 / 标签）
 
@@ -25,7 +25,7 @@
   - 右栏：Markdown 编辑器（Source / Preview / Split 三模式，切换组独占编辑器顶部一行），支持图片
 - **待办**：左侧月历选日（初始选中今日）+ 右侧选中日清单；标题行提供「今天」跳回与「新建」；新建 / 编辑共用 Dialog 表单（内容必填，可选「指定时间区间」，`end <= start` 拒绝、不支持跨天）；圆形 check 勾选完成（完成后内容与区间均加删除线）；hover 出编辑 / 删除按钮（删除无确认）；选中日无待办时空态提示
 - **设置**（四组）：
-  - 外观：主题（Light / Dark / Auto，ADR-0009）、字号三档
+  - 外观：主题（Light / Dark / 文艺绿 / 陶瓷 / Auto，ADR-0009）、字号三档
   - 快捷键：磁贴呼出热键（捕获式录入；冲突红字不落库；不允许清空）
   - 数据：数据目录与迁移、导出 md
   - 系统：开机自启动（默认关）、关闭主窗口时直接退出（默认关，默认托盘驻留）、显式退出按钮（spike ⑤ 定案：`QuitMode::Explicit` 全窗口关闭进程驻留，退出前置 `flush_all` 后 `cx.quit()`）
@@ -86,21 +86,21 @@ flowchart TB
 
 工作区保留 `fragmenta-core`（lib）和 `fragmenta`（lib + bin）。以下应用路径相对于 `crates/fragmenta/src/`：
 
-| 路径 | 内容 |
-| --- | --- |
-| `main.rs`、`lib.rs` | 程序入口、模块声明 |
-| `app.rs`、`app/quit.rs` | 启动装配、退出请求与失败提示 |
-| `notes/mod.rs`、`notes/state.rs` | 笔记功能接口、共享状态、事件、草稿与保存状态 |
-| `notes/editor.rs` | 笔记专用编辑器及三种编辑模式 |
-| `notes/page/` | 页面交互、视图、分类标签表单、标题栏操作区 |
-| `todos/mod.rs`、`todos/state.rs`、`todos/page/` | 待办功能接口、状态、月历页面与表单 |
-| `settings/mod.rs`、`settings/state.rs`、`settings/page.rs` | 设置功能接口、状态与页面 |
-| `ui/theme.rs`、`themes/*.json` | 内置主题定义、加载、预览与开发期热重载 |
-| `editor/mod.rs`、`editor/source.rs`、`editor/image_path.rs` | 共享图库登记、源文本输入与图片路径插件 |
-| `windows/main/mod.rs`、`windows/main/home.rs` | 主窗口单例、导航与布局、首页占位 |
-| `windows/tile/mod.rs`、`windows/tile/open.rs`、`windows/tile/view.rs` | 磁贴创建、定位与交互 |
-| `widgets/`、`utils/palette.rs` | 通用分栏、徽片与取色盘 |
-| `hotkey.rs`、`tray.rs`、`win32.rs` | 热键、托盘与平台能力 |
+| 路径                                                                        | 内容                                         |
+| --------------------------------------------------------------------------- | -------------------------------------------- |
+| `main.rs`、`lib.rs`                                                     | 程序入口、模块声明                           |
+| `app.rs`、`app/quit.rs`                                                 | 启动装配、退出请求与失败提示                 |
+| `notes/mod.rs`、`notes/state.rs`                                        | 笔记功能接口、共享状态、事件、草稿与保存状态 |
+| `notes/editor.rs`                                                         | 笔记专用编辑器及三种编辑模式                 |
+| `notes/page/`                                                             | 页面交互、视图、分类标签表单、标题栏操作区   |
+| `todos/mod.rs`、`todos/state.rs`、`todos/page/`                       | 待办功能接口、状态、月历页面与表单           |
+| `settings/mod.rs`、`settings/state.rs`、`settings/page.rs`            | 设置功能接口、状态与页面                     |
+| `ui/theme.rs`、`themes/*.json`                                          | 内置主题定义、加载、预览与开发期热重载       |
+| `editor/mod.rs`、`editor/source.rs`、`editor/image_path.rs`           | 共享图库登记、源文本输入与图片路径插件       |
+| `windows/main/mod.rs`、`windows/main/home.rs`                           | 主窗口单例、导航与布局、首页占位             |
+| `windows/tile/mod.rs`、`windows/tile/open.rs`、`windows/tile/view.rs` | 磁贴创建、定位与交互                         |
+| `widgets/`、`utils/palette.rs`                                          | 通用分栏、徽片与取色盘                       |
+| `hotkey.rs`、`tray.rs`、`win32.rs`                                    | 热键、托盘与平台能力                         |
 
 `fragmenta-core/src/` 保留 `model/`、`db/`、`settings.rs`、`media.rs`、`export.rs`。运行时 `settings.json` 固定 exe 旁，`fragmenta.db` 与 `imgs/` 位于数据目录。
 
@@ -159,7 +159,7 @@ impl Db {
 
 ```rust
 pub struct Settings {
-    pub theme: ThemeMode,        // Light | Dark | Auto（ADR-0009）
+    pub theme: ThemeMode,        // Light | Dark | LiteraryGreen | Ceramic | Auto（ADR-0009）
     pub editor_font_px: f32,     // 编辑器与主窗口列表正文字号（默认 16，12..=24）
     pub tile_font_px: f32,       // 磁贴小窗标题 / 正文字号（默认 16，12..=24）
     pub data_dir: PathBuf,       // 默认 {exe_dir}/data；内部平铺 fragmenta.db 与 imgs/
@@ -174,7 +174,7 @@ impl Settings {
 }
 ```
 
-`Auto` 根据 Windows 的 `observe_window_appearance` 回调在应用的 Light / Dark JSON 主题之间切换。主题定义统一归 `themes/*.json`，加载与应用集中于 `ui/theme.rs`，由 `SettingsState` 按主题选择调用。JSON 在编译期嵌入 EXE，开发构建额外监听源码主题目录；设置页预览读取同一份定义（ADR-0009）。
+`Auto` 根据 Windows 的 `observe_window_appearance` 回调在应用的 Light / Dark JSON 主题之间切换；文艺绿与陶瓷为浅色系主题，选中后固定以浅色模式生效。主题定义统一归 `themes/*.json`，加载与应用集中于 `ui/theme.rs`，由 `SettingsState` 按主题选择调用。JSON 在编译期嵌入 EXE，开发构建额外监听源码主题目录；设置页预览读取同一份定义（ADR-0009）。
 
 ### 5.4 core::media
 
@@ -259,7 +259,7 @@ impl SettingsState {
 }
 ```
 
-**Auto 主题桥接**（spike ③ 结论）：`observe_window_appearance` 回调 → 依外观 `Theme::global_mut` 切换 light/dark → `Theme::sync_base` + `App::refresh_windows()`。kit 主题不自动跟随系统外观，桥接逻辑收敛于 `SettingsState`（D8）。Auto 与色系主题互斥（枚举单选，ADR-0005）。
+**Auto 主题桥接**：`observe_window_appearance` 回调 → 依外观 `Theme::global_mut` 切换 light/dark → `Theme::sync_base` + `App::refresh_windows()`。kit 主题不自动跟随系统外观，桥接逻辑收敛于 `SettingsState`（D8）。Auto 与色系主题互斥（枚举单选，ADR-0005）。
 
 `SettingsState::attach_appearance_bridge` 校准当前外观并返回 `Subscription`，由 `MainShell` / `TileView` 各自持有；窗口视图释放时取消监听，设置 store 不累计保存订阅。
 
@@ -305,46 +305,11 @@ impl HotkeyController {
 
 ### 5.11 tray
 
-kit / gpui 无托盘能力，引入 `tray-icon` crate（Tauri 同款）。托盘图标常驻；事件（左键单击 / 菜单项）经 channel 回收，转发模式与热键一致（channel → `cx.spawn` 主循环消费）。共存性已由 spike ⑥ 验证通过（`examples/spike6_tray_icon.rs`，2026-10-12）：托盘在 gpui 主线程创建即可，其内部消息窗口由 gpui 主循环的 GetMessage/DispatchMessage 泵分发，无需自建消息循环；`TrayIcon` 非 `Send`，存 gpui 全局；既有热键链路不受干扰，drop 即移除图标。交互：左键 = `main::open`（幂等激活）；右键菜单 = 打开主窗口 / 退出（退出前置 `flush_all` + `cx.quit()`，与显式退出按钮同路径）。静默启动由 `app.rs` 启动编排判定：启动参数含 `--silent` 时不打开主窗口、仅托盘驻留；开机自启动注册表 Run 键写入的就是带 `--silent` 的命令行。
+kit / gpui 无托盘能力，引入 `tray-icon` crate（Tauri 同款）。托盘图标常驻；事件（左键单击 / 菜单项）经 channel 回收，转发模式与热键一致（channel → `cx.spawn` 主循环消费）。托盘在 gpui 主线程创建即可，其内部消息窗口由 gpui 主循环的 GetMessage/DispatchMessage 泵分发，无需自建消息循环；`TrayIcon` 非 `Send`，存 gpui 全局；既有热键链路不受干扰，drop 即移除图标。交互：左键 = `main::open`（幂等激活）；右键菜单 = 打开主窗口 / 退出（退出前置 `flush_all` + `cx.quit()`，与显式退出按钮同路径）。静默启动由 `app.rs` 启动编排判定：启动参数含 `--silent` 时不打开主窗口、仅托盘驻留；开机自启动注册表 Run 键写入的就是带 `--silent` 的命令行。
 
 ## 6. 数据模型与 Schema
 
-```sql
--- 迁移仅存在于 core::db::migrate，PRAGMA user_version 驱动
-CREATE TABLE notes (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  title       TEXT NOT NULL DEFAULT '',
-  content     TEXT NOT NULL DEFAULT '',        -- Markdown 源文
-  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
-  created_at  TEXT NOT NULL,                   -- RFC3339 本地时间
-  updated_at  TEXT NOT NULL
-);
-CREATE TABLE categories (
-  id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
-);
-CREATE TABLE tags (
-  id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE
-);
-CREATE TABLE note_tags (
-  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
-  tag_id  INTEGER NOT NULL REFERENCES tags(id)  ON DELETE CASCADE,
-  PRIMARY KEY (note_id, tag_id)
-);
-CREATE TABLE todos (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  content    TEXT NOT NULL,
-  date       TEXT NOT NULL,                    -- YYYY-MM-DD
-  start_min  INTEGER,                         -- 自午夜分钟数 0–1439；start/end 同 NULL = 全天
-  end_min    INTEGER,                         -- 同上；两列由 Rust tuple 类型保证同 NULL 或同值
-  done       INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX idx_notes_updated ON notes(updated_at DESC);
-CREATE INDEX idx_todos_date ON todos(date);
-```
+见`fragmenta-core/src/model`
 
 ## 7. 关键数据流：磁贴保存 → 主窗口刷新
 
@@ -377,74 +342,8 @@ sequenceDiagram
 
 | 正文中的引用          | 解析结果                 |
 | --------------------- | ------------------------ |
-| `imgs/...` 相对引用 | `{data_dir}/imgs/...` |
+| `imgs/...` 相对引用 | `{data_dir}/imgs/...`  |
 | 绝对路径              | 原样加载                 |
 | 其他相对路径          | 不渲染为图片，按原文展示 |
 
-三条解析规则与回退行为经 spike ② 验证通过。
-
-## 9. gpui-kit 0.7.1 API 基线
-
-**facade 分层**（`gpui-kit` 是门面 crate，应用只依赖它）：
-
-| 路径                    | 实际 crate          | 内容                                                               |
-| ----------------------- | ------------------- | ------------------------------------------------------------------ |
-| `gpui_kit::*`         | gpui（gpui-pre 系） | GPUI 全量 API                                                      |
-| `gpui_kit::base`      | gpui-base           | `Root` / `TextView` / `markdown()` / `html()`              |
-| `gpui_kit::component` | gpui-component      | `Button` / `Input` / `Textarea` / `Sidebar` / `Theme` 等 |
-| `gpui_kit::assets`    | gpui-kit-assets     | 图标；`AllAssets::new("")` 全量 Lucide                           |
-
-**开窗门面**（本架构统一入口）：
-
-```rust
-pub fn open_window<V: Render>(
-    options: WindowOptions,
-    cx: &mut App,
-    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
-) -> Result<(AnyWindowHandle, Entity<V>)>
-// 自动包 base::Root（overlay hosting），builder 只返回业务视图
-```
-
-**主题**：`Theme` 全局单例，`ActiveTheme` trait（`cx.theme()`）；`ThemeRegistry` 加载内置 JSON 配置，`ui/theme.rs` 通过 `Theme::update` 与 `apply_config` 应用颜色并同步全部窗口。开发构建通过 `ThemeRegistry::watch_dir` 监听主题源文件，重载后重新应用尺寸规范。主题配色归 JSON，尺寸与文字角色归 `ui/tokens.rs`。
-
-**侧栏**：`Sidebar::new().collapsible(true).collapsed(state)` + `SidebarToggleButton`。
-
-**多行输入**：单行 `InputState`、多行 `TextareaState`（`component::input::*`），构造需 `(window, cx)`。
-
-**测试**：`test-support` feature + `#[gpui_kit::test]` 宏——headless 窗口渲染真实组件、派发指针/键盘事件、断言状态。
-
-**0.6 期验证经验**（0.7.1 经 spike ④/⑤ 复验，条目 1–5 通过、条目 6 留待 Phase 8 release 手动验收；0.6 原始记录见 `docs/experiences/gpui-kit-validation.md`）：
-
-1. `PopUp` + `titlebar: None` 的窗口 Windows 后端自带 `WS_EX_TOPMOST | WS_EX_TOOLWINDOW`；取消置顶需 `SetWindowPos(HWND_NOTOPMOST)`
-2. `window_control_area(Drag)` 不能覆盖含按钮的区域（左键点击会被系统拖拽循环吞掉），只放在无交互元素的中间区域
-3. `GlobalHotKeyManager` 析构即注销热键，须 `Box::leak` 保活整个进程
-4. 热键事件须过滤 `HotKeyState::Pressed`
-5. `GetCursorPos` 返回物理像素，逻辑坐标 = 物理坐标 ÷ 目标显示器有效 DPI——`MonitorFromPoint` + `GetDpiForMonitor`（多显示器不同缩放时 `GetDpiForSystem` 取错屏）。`window_bounds` origin 即目标显示器逻辑坐标：后端按目标显示器 scale 换算回物理坐标，且 bounds 中心点必须落在目标显示器上，否则整个 bounds 被丢弃、窗口回退到默认居中；鼠标定位开窗必须同时设置 `display_id`（未设置时目标显示器 = 主显示器）
-6. 磁贴打开性能验证用 release 构建
-
-**0.7.1 spike 新增结论**（Phase 2 验证；各阶段实施要点见 `docs/experiences/phase2-spike-conclusions.md`）：
-
-7. `Textarea::on_paste` 官方粘贴拦截点与 handler 内实体更新约束（§5.9）
-8. kit 主题不自动跟随系统外观，Auto 为应用层桥接（§5.3 / §5.6）
-9. `QuitMode::Explicit` 全窗口关闭进程驻留、热键可用，`cx.quit()` 完全退出（Phase 8 进程常驻与退出的实现依据）
-
-## 10. spike 验证结论（原待验证技术点，Phase 2 全部落定）
-
-1. `Textarea` 粘贴图片钩子：kit 0.7.1 已提供 `on_paste` 官方拦截点，机制与 handler 内实体更新约束见 §5.9（spike ① 通过）
-2. markdown 自定义图片渲染：`MarkdownPlugin` 在 `parse` 阶段拦截 `mdast::Node::Image`、`render` 落地 §8 三条解析规则与回退（spike ② 通过）；无现成 "src → 路径解析器" API，插件自行实现
-3. Auto 主题：Windows 下 `observe_window_appearance` 可区分 Light/Dark，kit 主题不自动跟随系统外观，Auto 为应用层桥接（§5.3 / §5.6；spike ③ 通过）
-
-## 11. 测试策略
-
-- **core**：`Db::open_in_memory()` 单测——筛选 / 标签 / 分类 / 迁移 / 导出 / settings 往返 / 摘要截断
-- **state / UI**：`#[gpui_kit::test]` headless 集成测试——防抖保存、事件广播、跨窗口同步
-- **视觉与交互**：人工验收
-
-## 12. 实施顺序
-
-1. workspace 骨架 + core（model → db → settings → media / export，附测试）
-2. spike（与步骤 1 并行）：① 图片粘贴——Ctrl+V 监听 + 剪贴板图片检测（图与文本并存时图片优先）；② markdown 图片渲染——`MarkdownPlugin` 拦截 image 节点落地 §8 规则；③ Auto 主题——Windows 下 `observe_window_appearance` 能否区分 Light/Dark；④ §9 六条 0.6 期约束在 0.7.1 复验。结论回写 §9 / §10 后再进入编辑器实现
-3. state 层 + tile 迁移到新架构（恢复到验证期同等功能：热键呼出、防抖自动保存、置顶；新增关闭 flush 语义）
-4. 主窗口 shell + 笔记页（列表 / 筛选 / 右键分类标签 / 卡片删除 / 编辑器三模式 / 图片粘贴）
-5. 待办页（首页日历随 Phase 12 废弃，首页内容待定）
-6. 设置页（主题 Light / Dark / Auto、字号、热键、数据目录与迁移、导出、自启动、关闭退出、托盘与静默启动，ADR-0004/0006/0009）
+三条解析规则与回退行为经 spike ② 验证通

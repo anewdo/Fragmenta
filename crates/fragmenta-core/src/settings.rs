@@ -2,12 +2,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 主题选择；Auto 跟随系统深浅色。
+/// 主题选择：四套内置配色 + Auto（跟随系统深浅色）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeMode {
     #[default]
     Light,
     Dark,
+    /// 文艺绿：浅色系，纸墨绿调。
+    LiteraryGreen,
+    /// 陶瓷：浅色系，暖陶土调。
+    Ceramic,
     Auto,
 }
 

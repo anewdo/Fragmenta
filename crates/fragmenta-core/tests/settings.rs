@@ -2,7 +2,7 @@
 
 mod common;
 
-use fragmenta_core::settings::{FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, Settings};
+use fragmenta_core::settings::{FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, Settings, ThemeMode};
 
 #[test]
 fn font_sizes_default_roundtrip_and_clamp() {
@@ -34,6 +34,21 @@ fn font_sizes_default_roundtrip_and_clamp() {
         loaded.tile_font_px,
         fragmenta_core::settings::FONT_SIZE_MIN_PX
     );
+}
+
+#[test]
+fn color_theme_choices_roundtrip() {
+    // 新增色系主题按枚举名落盘，读回保持一致
+    let dir = common::TempDir::new("settings-color-theme");
+    let path = dir.path().join("settings.json");
+    for theme in [ThemeMode::LiteraryGreen, ThemeMode::Ceramic] {
+        let settings = Settings {
+            theme,
+            ..Default::default()
+        };
+        settings.save(&path).expect("保存失败");
+        assert_eq!(Settings::load(&path).expect("读取失败").theme, theme);
+    }
 }
 
 #[test]

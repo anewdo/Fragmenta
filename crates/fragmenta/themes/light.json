@@ -55,7 +55,7 @@
         "ring": "#0F6CBD",
         "selection.background": "#B4D6FA",
         "drag.border": "#0F6CBD",
-        "scrollbar.background": "#FFFFFF00",
+        "scrollbar.background": "#00000000",
         "scrollbar.thumb.background": "#BDBDBD",
         "scrollbar.thumb.hover.background": "#929292",
         "switch.background": "#D1D1D1",
