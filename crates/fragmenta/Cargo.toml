@@ -13,6 +13,10 @@ smol = "2"
 chrono = "0.4"
 thiserror = "2"
 
+# 应用图标：解码内嵌 .ico（托盘与关于页共用；依赖树中 gpui 已编译
+# image，此处仅补 ico 解码特性）
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
@@ -24,9 +28,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Registry",
     "Win32_System_Threading",
 ] }
-
-# 托盘图标：解码内嵌 .ico（依赖树中 gpui 已编译 image，此处仅补 ico 解码特性）
-image = { version = "0.25", default-features = false, features = ["ico", "png"] }
 
 [build-dependencies]
 winresource = "0.1"

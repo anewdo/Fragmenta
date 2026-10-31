@@ -1,9 +1,10 @@
-//! 通用选色弹层内容：无色 + 内置 6 色色板 + 自定义（hex 输入 + HSL 滑杆，
+//! 通用选色内容：无色 + 内置 6 色色板 + 自定义（hex 输入 + HSL 滑杆，
 //! 状态机复用 kit `ColorPickerState`）。
 //!
-//! 标签管理页与笔记页的标签编辑弹窗共用本模块；弹层打开 / 关闭与
-//! 落库语义由调用方经 `on_select` 回调决定，自定义滑杆的即时变更由调用方
-//! 订阅 `ColorPickerEvent` 处理。
+//! 笔记页的标签编辑弹窗以 Popover 承载 [`color_popover_content`]；标签管理
+//! 页的新建 / 编辑弹窗直接内联 [`color_picker_content`]。选定语义由调用方经
+//! `on_select` 回调决定，自定义滑杆的即时变更由调用方订阅
+//! `ColorPickerEvent` 处理。
 
 use std::rc::Rc;
 
@@ -27,6 +28,8 @@ const SWATCH: Pixels = px(20.);
 /// 触发器色块宽高：收起态的矩形色块尺寸。
 const TRIGGER_WIDTH: Pixels = px(30.);
 const TRIGGER_HEIGHT: Pixels = px(18.);
+/// 弹层内容的固定宽度。
+const POPOVER_WIDTH: Pixels = px(232.);
 
 /// 色相滑杆轨道的分段数（离散色块拼出彩虹带）。
 const HUE_STEPS: usize = 12;
@@ -51,15 +54,17 @@ pub(crate) fn create_picker(
     })
 }
 
-/// 选色弹层内容。`on_select` 处理「无色」与内置色板的选定；
-/// `none_label` 是无色选项的文案（管理页「无色」/ 编辑弹窗「跟随主题」）。
-pub(crate) fn color_popover_content(
+/// 选色内容：`on_select` 处理「无色」与内置色板的选定；`none_label` 是无色
+/// 选项的文案（管理页「无色」/ 编辑弹窗「跟随主题」）；`width` 由承载方决定
+///（Popover 固定宽度，弹窗内联铺满内容列）。
+pub(crate) fn color_picker_content<T: 'static>(
     current: Option<Hsla>,
     picker: &Entity<ColorPickerState>,
     none_label: &'static str,
     on_select: impl Fn(Option<Hsla>, &mut Window, &mut App) + 'static,
+    width: Pixels,
     window: &mut Window,
-    cx: &mut Context<PopoverState>,
+    cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = cx.theme().clone();
     let on_select: Rc<dyn Fn(Option<Hsla>, &mut Window, &mut App)> = Rc::new(on_select);
@@ -150,10 +155,10 @@ pub(crate) fn color_popover_content(
         hsla(slider_color.h, slider_color.s, 1., 1.),
     );
 
-    // hex 输入回车经 Confirm 关闭弹层（Popover 全局注册 enter → Confirm），
-    // 拦截后回车仅走 ColorPickerState 的提交语义（即时落库、弹层保持打开）
+    // hex 输入回车经 Confirm 关闭宿主（Popover / Dialog），拦截后回车仅走
+    // ColorPickerState 的提交语义（即时生效、宿主保持打开）
     v_flex()
-        .w(px(232.))
+        .w(width)
         .gap_2()
         .on_action(|_: &gpui_kit::base::actions::Confirm, _, cx| cx.stop_propagation())
         .child(none_row)
@@ -184,6 +189,26 @@ pub(crate) fn color_popover_content(
                 )),
         )
         .into_any_element()
+}
+
+/// 选色弹层内容：Popover 固定宽度承载，供笔记页标签编辑弹窗使用。
+pub(crate) fn color_popover_content(
+    current: Option<Hsla>,
+    picker: &Entity<ColorPickerState>,
+    none_label: &'static str,
+    on_select: impl Fn(Option<Hsla>, &mut Window, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut Context<PopoverState>,
+) -> AnyElement {
+    color_picker_content(
+        current,
+        picker,
+        none_label,
+        on_select,
+        POPOVER_WIDTH,
+        window,
+        cx,
+    )
 }
 
 /// 单条 HSL 滑杆：左侧角色化标签 + 彩色轨道（kit 滑杆本体透明叠加其上）。

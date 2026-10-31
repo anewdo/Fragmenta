@@ -31,15 +31,6 @@ impl TaxonomyState {
         self.db.tags_with_usage()
     }
 
-    /// 新建标签（默认无色）；成功后广播 `Changed`。
-    pub(crate) fn create(&mut self, name: &str, cx: &mut Context<Self>) -> DbResult<()> {
-        let result = self.db.create_tag(name);
-        if result.is_ok() {
-            cx.emit(TaxonomyEvent::Changed);
-        }
-        result
-    }
-
     /// 确保标签存在（不存在时按给定颜色建立，已存在保留原颜色）；返回是否
     /// 新建，新建后广播 `Changed` 供管理页与筛选选项刷新。
     pub(crate) fn ensure_tag(
@@ -56,12 +47,7 @@ impl TaxonomyState {
     }
 
     /// 重命名标签（挂载与颜色随实体保留）；成功后广播 `Changed`。
-    pub(crate) fn rename(
-        &mut self,
-        from: &str,
-        to: &str,
-        cx: &mut Context<Self>,
-    ) -> DbResult<()> {
+    pub(crate) fn rename(&mut self, from: &str, to: &str, cx: &mut Context<Self>) -> DbResult<()> {
         let result = self.db.rename_tag(from, to);
         if result.is_ok() {
             cx.emit(TaxonomyEvent::Changed);

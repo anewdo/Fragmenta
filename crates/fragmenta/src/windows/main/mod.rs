@@ -8,6 +8,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::time::Duration;
 
+use crate::about::AboutPage;
 use crate::notes::NotesPage;
 use crate::settings::SettingsPage;
 use crate::taxonomy::TaxonomyPage;
@@ -37,6 +38,7 @@ enum Page {
     Todos,
     Tags,
     Settings,
+    About,
 }
 
 /// 侧栏拖宽的拖拽值：仅作 `on_drag` 类型标记，不带数据。
@@ -146,7 +148,7 @@ fn initial_bounds(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
 }
 
 /// 主窗口 shell：自绘标题栏 + 侧栏导航（可拖宽 / 可收起，带动画）+
-/// 四页常驻 Entity 路由。
+/// 五页常驻 Entity 路由。
 struct MainShell {
     page: Page,
     sidebar_collapsed: bool,
@@ -162,6 +164,7 @@ struct MainShell {
     todos: Entity<TodosPage>,
     tags: Entity<TaxonomyPage>,
     settings: Entity<SettingsPage>,
+    about: Entity<AboutPage>,
     /// toast 浮层（如导出结果报告）：toast 状态变化时重绘 shell。
     toast: Entity<ToastState>,
     _appearance_sub: Subscription,
@@ -222,6 +225,7 @@ impl MainShell {
             todos: cx.new(|cx| TodosPage::new(window, cx)),
             tags: cx.new(|cx| TaxonomyPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
+            about: cx.new(|cx| AboutPage::new(window, cx)),
             toast,
             _appearance_sub: appearance_sub,
             _toast_sub: toast_sub,
@@ -338,6 +342,7 @@ impl Render for MainShell {
                         self.nav_item(Page::Todos, "待办", IconName::SquareCheckBig, collapsed, cx),
                         self.nav_item(Page::Tags, "标签", IconName::Tags, collapsed, cx),
                         self.nav_item(Page::Settings, "设置", IconName::Settings, collapsed, cx),
+                        self.nav_item(Page::About, "关于", IconName::Info, collapsed, cx),
                     ]),
             );
         let target_width = if collapsed {
@@ -424,6 +429,7 @@ impl Render for MainShell {
                 Page::Todos => self.todos.clone().into_any_element(),
                 Page::Tags => self.tags.clone().into_any_element(),
                 Page::Settings => self.settings.clone().into_any_element(),
+                Page::About => self.about.clone().into_any_element(),
             }))
             // 骑缝手柄与提示线挂在内容列左缘（absolute，不占布局空间），
             // 仅展开态

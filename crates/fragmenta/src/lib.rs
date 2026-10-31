@@ -9,6 +9,7 @@ pub mod editor;
 pub mod hotkey;
 pub mod tray;
 
+pub mod about;
 pub mod notes;
 pub mod settings;
 pub mod taxonomy;

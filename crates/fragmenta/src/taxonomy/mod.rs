@@ -2,6 +2,7 @@
 
 mod page;
 mod state;
+mod tag_modal;
 
 use gpui_kit::{Entity, Global};
 

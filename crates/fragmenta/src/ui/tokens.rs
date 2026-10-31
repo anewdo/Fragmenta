@@ -31,6 +31,8 @@ pub mod widths {
     use super::{Pixels, px};
 
     pub const SETTINGS_CONTENT: Pixels = px(640.);
+    /// 关于页内容栏：信息稀疏，与设置页同宽保持观感一致。
+    pub const ABOUT_CONTENT: Pixels = px(640.);
     pub const TAXONOMY_CONTENT: Pixels = px(560.);
     pub const DIALOG: Pixels = px(380.);
     /// 笔记列表默认宽度：笔记页搜索栏与高级筛选面板沿用同一宽度。

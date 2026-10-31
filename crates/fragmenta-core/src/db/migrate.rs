@@ -38,6 +38,7 @@ CREATE TABLE todos (
 );
 CREATE INDEX idx_notes_updated ON notes(updated_at DESC);
 CREATE INDEX idx_todos_date ON todos(date);
+CREATE INDEX idx_note_tags_tag ON note_tags(tag_id);
 ";
 
 /// 读取文件版本并按需建库；版本过新直接报错，库文件保持不动。
