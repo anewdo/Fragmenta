@@ -1,6 +1,6 @@
 [package]
 name = "fragmenta"
-version = "0.1.0"
+version = { workspace = true }
 edition = "2024"
 
 [dependencies]
@@ -24,6 +24,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Registry",
     "Win32_System_Threading",
 ] }
+
+# 托盘图标：解码内嵌 .ico（依赖树中 gpui 已编译 image，此处仅补 ico 解码特性）
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+
+[build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 # headless 测试（#[gpui_kit::test]）需要 test-support feature

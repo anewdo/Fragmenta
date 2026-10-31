@@ -1,15 +1,4 @@
-//! 托盘驻留（架构 §5.11）：进程运行期间图标常驻。
-//!
-//! 共存机制（spike ⑥ 结论，docs/experiences/phase2-spike-conclusions.md §9）：
-//! 托盘在 gpui 主线程创建，其内部消息窗口由 gpui 主循环的
-//! GetMessage/DispatchMessage 泵分发，无需自建消息循环；`TrayIcon` 非
-//! `Send`，存于本模块全局。事件链路与热键控制器同构：
-//! crossbeam receiver（独立线程阻塞读）→ smol channel → `cx.spawn` 主循环消费。
-//!
-//! 交互：左键 = 打开/激活主窗口（幂等）；右键菜单 = 打开主窗口 / 退出
-//! （退出前置 flush_all，与显式退出按钮同路径）。
-//! 图标为代码生成占位（正式图标资源不在 Phase 13 范围）。
-//! 非 Windows 平台无托盘（cfg 隔离，回退空实现）。
+//! 托盘驻留：进程运行期间图标常驻。
 
 #[cfg(windows)]
 mod imp {
@@ -57,26 +46,20 @@ mod imp {
         .detach();
     }
 
-    /// 32×32 圆点占位图标（豆沙绿，透明背景）。
-    fn placeholder_icon() -> Result<tray_icon::Icon, Box<dyn std::error::Error>> {
-        const S: u32 = 32;
-        let center = S as f32 / 2.0 - 0.5;
-        let radius = S as f32 / 2.0 - 2.0;
-        let mut rgba = Vec::with_capacity((S * S * 4) as usize);
-        for y in 0..S {
-            for x in 0..S {
-                let dx = x as f32 - center;
-                let dy = y as f32 - center;
-                let inside = dx * dx + dy * dy <= radius * radius;
-                rgba.extend_from_slice(if inside {
-                    &[0x7f, 0xa8, 0x6a, 0xff]
-                } else {
-                    &[0, 0, 0, 0]
-                });
-            }
-        }
-        tray_icon::Icon::from_rgba(rgba, S, S)
-            .map_err(|err| format!("占位图标构建失败: {err}").into())
+    /// 应用图标（与 exe 资源、窗口图标同源）。image 的 ICO 解码取最高
+    /// 分辨率帧，缩放到托盘尺寸后交给 tray-icon。
+    fn app_icon() -> Result<tray_icon::Icon, Box<dyn std::error::Error>> {
+        const TRAY_SIZE: u32 = 32;
+        let decoded = image::load_from_memory_with_format(
+            include_bytes!("../../../assets/app.ico"),
+            image::ImageFormat::Ico,
+        )
+        .map_err(|err| format!("解码 assets/app.ico 失败: {err}"))?;
+        let rgba = decoded
+            .resize_exact(TRAY_SIZE, TRAY_SIZE, image::imageops::FilterType::Lanczos3)
+            .to_rgba8();
+        tray_icon::Icon::from_rgba(rgba.into_raw(), TRAY_SIZE, TRAY_SIZE)
+            .map_err(|err| format!("托盘图标构建失败: {err}").into())
     }
 
     fn create_tray() -> Result<TrayIcon, Box<dyn std::error::Error>> {
@@ -90,7 +73,7 @@ mod imp {
             // 默认 true：左键也会弹菜单；关闭后左键只发 Click 事件
             .with_menu_on_left_click(false)
             .with_tooltip("Fragmenta")
-            .with_icon(placeholder_icon()?)
+            .with_icon(app_icon()?)
             .build()?)
     }
 

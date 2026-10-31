@@ -1,12 +1,6 @@
-//! 标签编辑弹窗：居中卡片 + 遮罩，打开 / 关闭均带淡入淡出。
+//! 标签编辑弹窗
 //!
-//! 使用 gpui-base 的无样式 Dialog 宿主（焦点陷阱 / Esc / 点击遮罩关闭）。
-//!
-//! 标签勾选是弹窗内草稿：点击只切换选中态，卡片保持原样；点保存才一次性
-//! 写回笔记并提示结果，取消直接丢弃草稿。添加按钮只负责创建设计标签实体
-//! （带取色器选定的颜色）并把它加入草稿，同样不触碰笔记挂载。
-//! 关闭不是立即销毁：先把阶段切到 `Closing` 播放反向动画，计时结束后再
-//! 释放输入实体并归还焦点。
+//! 使用 gpui-base 的无样式 Dialog 宿主
 
 use std::rc::Rc;
 
@@ -137,8 +131,8 @@ impl NotesPage {
         cx.notify();
     }
 
-    /// 添加标签：标签实体按取色器颜色即时落库（已存在则保留原颜色），
-    /// 并加入草稿选中；笔记挂载仍然等到保存。
+    /// 添加标签：标签实体按取色器颜色即时落库并加入草稿选中；标签已存在时
+    /// 仅提示警告并保留输入内容，不自动勾选。笔记挂载仍然等到保存。
     fn add_taxonomy_tag(&mut self, raw: String, window: &mut Window, cx: &mut Context<Self>) {
         let name = raw.trim().to_string();
         if name.is_empty() {
@@ -161,16 +155,16 @@ impl NotesPage {
             }
         };
 
-        // 已存在的标签不再新建，直接勾选进草稿，因此也不提示“保存成功”
+        // 已存在的标签不再静默勾选：提示重复并保留输入内容，等用户改用别的名字
+        if !inserted {
+            toast::warn("标签已存在", window, cx);
+            return;
+        }
         if let Some(modal) = self.taxonomy_modal.as_mut() {
-            if !modal.selected.iter().any(|tag| tag == &name) {
-                modal.selected.push(name);
-            }
+            modal.selected.push(name);
         }
         tag_input.update(cx, |state, cx| state.set_value("", window, cx));
-        if inserted {
-            toast::success("标签保存成功", window, cx);
-        }
+        toast::success("标签保存成功", window, cx);
         cx.notify();
     }
 
@@ -186,7 +180,7 @@ impl NotesPage {
             .update(cx, |state, cx| state.set_tags(note_id, tags, cx))
         {
             Ok(()) => {
-                toast::success("标签保存成功", window, cx);
+                toast::success("笔记标签更新成功", window, cx);
                 true
             }
             Err(err) => {
