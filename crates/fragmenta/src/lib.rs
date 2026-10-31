@@ -1,6 +1,6 @@
 //! fragmenta：应用层（bin crate 的 lib 目标）。
 //!
-//! 笔记、待办、分类标签管理、设置功能及窗口与共享编辑能力归此 crate
+//! 笔记、待办、标签管理、设置功能及窗口与共享编辑能力归此 crate
 //! 纯逻辑全部在 `fragmenta-core`，UI 层不触 SQL
 
 pub mod app;

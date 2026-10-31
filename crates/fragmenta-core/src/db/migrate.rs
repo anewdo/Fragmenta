@@ -1,4 +1,4 @@
-//! Schema 迁移：`PRAGMA user_version` 驱动，版本推进在单事务内原子完成（架构 §6）。
+//! Schema 迁移：`PRAGMA user_version` 驱动，建库在单事务内原子完成（架构 §6）。
 
 use super::{DbError, Result};
 use rusqlite::Connection;
@@ -6,13 +6,9 @@ use rusqlite::Connection;
 /// 当前程序支持的 Schema 版本。
 pub const SCHEMA_VERSION: i64 = 1;
 
-/// v1 全量 schema（架构 §6 定案；DDL 按外键依赖排序，父表在前）。
+/// v1 全量 schema（DDL 按外键依赖排序，父表在前）。
+/// 项目未发布：分类移除后的终态直接作为 v1，不保留过渡迁移。
 const V1: &str = "
-CREATE TABLE categories (
-  id   INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  color TEXT                                    -- #RRGGBB；NULL = 未选色
-);
 CREATE TABLE tags (
   id   INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -22,7 +18,6 @@ CREATE TABLE notes (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   title       TEXT NOT NULL DEFAULT '',
   content     TEXT NOT NULL DEFAULT '',        -- Markdown 源文
-  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   created_at  TEXT NOT NULL,                   -- RFC3339 本地时间
   updated_at  TEXT NOT NULL
 );
@@ -45,7 +40,7 @@ CREATE INDEX idx_notes_updated ON notes(updated_at DESC);
 CREATE INDEX idx_todos_date ON todos(date);
 ";
 
-/// 读取文件版本并按需推进；版本过新直接报错，库文件保持不动。
+/// 读取文件版本并按需建库；版本过新直接报错，库文件保持不动。
 pub(super) fn run(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if current > SCHEMA_VERSION {
@@ -63,15 +58,3 @@ pub(super) fn run(conn: &mut Connection) -> Result<()> {
     tx.commit()?;
     Ok(())
 }
-
-// 表是否已有指定列（`PRAGMA table_info` 第二列为列名）。
-// fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-//     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-//     let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-//     for name in rows {
-//         if name? == column {
-//             return Ok(true);
-//         }
-//     }
-//     Ok(false)
-// }

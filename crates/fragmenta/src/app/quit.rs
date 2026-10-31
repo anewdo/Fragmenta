@@ -194,7 +194,6 @@ mod tests {
             id: 0,
             title: "旧标题".into(),
             content: "旧内容".into(),
-            category: None,
             tags: vec![],
             created_at: now,
             updated_at: now,

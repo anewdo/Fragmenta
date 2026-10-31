@@ -3,7 +3,7 @@
 > 状态：定案（2026-10-18 功能模块组织调整）
 > 技术基线：Rust (edition 2024) · gpui-kit 0.8.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
 > 形态：单进程多窗口桌面应用，无后台服务，轻量低内存
-> 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 分类 / 标签）
+> 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 标签）
 
 ## 1. 产品概述
 
@@ -21,7 +21,7 @@
 
 - **首页**：内容待定（原"月历 + 选中日待办"方案随 Phase 12 废弃，占位页维持现状）
 - **笔记**：两栏布局、分界线可拖动
-  - 左栏：顶部搜索（标题 + 正文）与高级筛选（分类 / 标签多选）；其下排序（更新时间 / 创建时间 / 名称）与「新增笔记」按钮 + 笔记卡片列表（标题、创建时间、摘要、分类、标签最多 3 个；右键菜单设置分类与标签，分类唯一、标签可多；卡片右端垃圾桶图标删除，带确认）
+  - 左栏：顶部搜索（标题 + 正文）与高级筛选（标签多选）；其下排序（更新时间 / 创建时间 / 名称）与「新增笔记」按钮 + 笔记卡片列表（标题、创建时间、摘要、标签最多 3 个；右键菜单设置标签，标签可多；卡片右端垃圾桶图标删除，带确认）
   - 右栏：Markdown 编辑器（Source / Preview / Split 三模式，切换组独占编辑器顶部一行），支持图片
 - **待办**：左侧月历选日（初始选中今日）+ 右侧选中日清单；标题行提供「今天」跳回与「新建」；新建 / 编辑共用 Dialog 表单（内容必填，可选「指定时间区间」，`end <= start` 拒绝、不支持跨天）；圆形 check 勾选完成（完成后内容与区间均加删除线）；hover 出编辑 / 删除按钮（删除无确认）；选中日无待办时空态提示
 - **设置**（四组）：
@@ -92,7 +92,7 @@ flowchart TB
 | `app.rs`、`app/quit.rs`                                                 | 启动装配、退出请求与失败提示                 |
 | `notes/mod.rs`、`notes/state.rs`                                        | 笔记功能接口、共享状态、事件、草稿与保存状态 |
 | `notes/editor.rs`                                                         | 笔记专用编辑器及三种编辑模式                 |
-| `notes/page/`                                                             | 页面交互、视图、分类标签表单、标题栏操作区   |
+| `notes/page/`                                                             | 页面交互、视图、标签表单、标题栏操作区       |
 | `notes/components/`                                                       | 笔记内复用组件（标签徽片、可选标签矩形）     |
 | `todos/mod.rs`、`todos/state.rs`、`todos/page/`                       | 待办功能接口、状态、月历页面与表单           |
 | `settings/mod.rs`、`settings/state.rs`、`settings/page.rs`            | 设置功能接口、状态与页面                     |
@@ -140,17 +140,14 @@ impl Db {
     // 笔记
     pub fn upsert_note(&self, note: &mut Note) -> Result<()>;   // 回填 id / 时间戳
     pub fn delete_note(&self, id: i64) -> Result<()>;
-    pub fn notes(&self, filter: &NoteFilter) -> Result<Vec<Note>>;  // 标题/正文 LIKE + 分类（多选，任一命中）+ 标签 + 排序
+    pub fn notes(&self, filter: &NoteFilter) -> Result<Vec<Note>>;  // 标题/正文 LIKE + 标签 + 排序
     // 待办
     pub fn upsert_todo(&self, todo: &mut Todo) -> Result<()>;
     pub fn delete_todo(&self, id: i64) -> Result<()>;
     pub fn todos_between(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<Todo>>;
     // 首页日历聚合（一次查询返回每日 note_count / todo_count）
     pub fn activity_by_day(&self, from: NaiveDate, to: NaiveDate) -> Result<Vec<DayActivity>>;
-    // 分类与标签
-    pub fn categories(&self) -> Result<Vec<String>>;
-    pub fn set_note_category(&self, note_id: i64, category: Option<&str>) -> Result<()>;
-    pub fn rename_category(&self, from: &str, to: &str) -> Result<()>;
+    // 标签
     pub fn tags(&self) -> Result<Vec<String>>;
     pub fn set_note_tags(&self, note_id: i64, tags: &[String]) -> Result<()>;
 }
@@ -221,7 +218,6 @@ impl NotesState {
     // 尝试全部 pending 槽；任一失败返回 Failed，失败内容保留供重试
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) -> db::Result<()>;
     // 删除成功后取消 Note(id) 待写槽与计时器，再广播 Changed；失败保留待写内容
-    pub fn set_category(&mut self, id: i64, cat: Option<&str>, cx: &mut Context<Self>);
     pub fn set_tags(&mut self, id: i64, tags: Vec<String>, cx: &mut Context<Self>);
     pub fn notes(&self, filter: &NoteFilter) -> db::Result<Vec<Note>>;   // read-through 直查；失败可观察（列表错误占位依赖于此）
 }
@@ -229,7 +225,7 @@ impl NotesState {
 
 `TodosState` 同构（add / toggle / update / delete / todos_between）。页面在 `Changed` 事件回调里拉取数据，render 内不做查询。
 
-**订阅矩阵**：主窗口各页（列表 / 日历 / 待办）订阅 `Changed` 重拉数据；磁贴与编辑器不订阅 `Changed`——磁贴只响应携带自己 key 的 `Saved`，编辑器是当前笔记内容的事实来源（直到切换笔记）。分类 / 标签管理页订阅 `NotesEvent::Changed`（笔记侧写操作会改变实体集合），笔记列表页另订阅 `TaxonomyEvent::Changed`（管理页建 / 改 / 删实体）重拉列表与筛选选项。
+**订阅矩阵**：主窗口各页（列表 / 日历 / 待办）订阅 `Changed` 重拉数据；磁贴与编辑器不订阅 `Changed`——磁贴只响应携带自己 key 的 `Saved`，编辑器是当前笔记内容的事实来源（直到切换笔记）。标签管理页订阅 `NotesEvent::Changed`（笔记侧写操作会改变实体集合），笔记列表页另订阅 `TaxonomyEvent::Changed`（管理页建 / 改 / 删实体）重拉列表与筛选选项。
 
 **id 回填闭环**：新磁贴持 `Option<i64>`，保存以 `Draft` key 提交；收到匹配自己的 `Saved { key, id, .. }` 后记录 id，此后以 `Note(id)` 为 key 保存。
 
@@ -298,7 +294,7 @@ impl HotkeyController {
 - **笔记编辑器组装**：模式枚举 `Source | Preview | Split`——Source = 源文本输入组件，Preview = `base::markdown(...).plugin(图片路径插件).scrollable(true)`，Split 左右双栏
 - 图片粘贴机制（spike ① 验证）：kit 0.7.1 提供 `Textarea::on_paste` 官方拦截点（`capture_action(Paste)` + `stop_propagation`），handler 签名 `Fn(&ClipboardItem, &mut Window, &mut App) -> bool`，返回 `true` 消费本次粘贴；图与文本并存时图片优先；图片经 `Image::from_bytes` 取字节 → `Images::import` → `TextareaState::insert` 光标处插入引用。handler 内实体更新必须经 `Entity::update` + handler 持有的 `&mut Window`——`WeakEntity::update_in` 走 `App::with_window`，在 capture_action 派发栈内窗口已被占用，查找必然失败
 - Split 双栏各自独立滚动为最终行为（见 ADR-0003）
-- 编辑器只含标题与正文，不含分类 / 标签 UI（分类标签唯一查看编辑入口 = 左栏卡片右键菜单）
+- 编辑器只含标题与正文，不含标签 UI（标签唯一查看编辑入口 = 左栏卡片右键菜单）
 
 ### 5.10 widgets
 

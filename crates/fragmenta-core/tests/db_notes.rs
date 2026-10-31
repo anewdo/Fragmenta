@@ -1,4 +1,4 @@
-//! 笔记列表查询黑盒测试：排序方式与总数统计（真实 SQLite）。
+//! 笔记列表查询黑盒测试：排序方式与筛选条件（真实 SQLite）。
 
 mod common;
 
@@ -16,7 +16,6 @@ fn note_with(title: &str, content: &str) -> Note {
         id: 0,
         title: title.to_string(),
         content: content.to_string(),
-        category: None,
         tags: Vec::new(),
         created_at: Local::now(),
         updated_at: Local::now(),
@@ -35,7 +34,7 @@ fn sorted_titles(notes: Vec<Note>) -> Vec<String> {
 
 /// 三种排序各自按对应字段生效；名称排序忽略大小写。
 #[test]
-fn notes_follow_selected_sort_and_count() {
+fn notes_follow_selected_sort() {
     let dir = TempDir::new("db-notes-sort");
     let db_path = dir.path().join("notes.db");
     let db = Db::open(&db_path).unwrap();
@@ -89,12 +88,11 @@ fn notes_follow_selected_sort_and_count() {
         titles(db.notes(&filter(NoteSort::Title)).unwrap()),
         ["beta", "Gamma", "Zulu"]
     );
-    assert_eq!(db.note_count().unwrap(), 3);
 }
 
-/// 关键词同时匹配标题与正文；分类多选为"或"，与标签条件为"与"。
+/// 关键词同时匹配标题与正文；标签筛选要求全部所选标签同时挂载。
 #[test]
-fn fulltext_search_and_multi_category_filter() {
+fn fulltext_search_and_tag_filter() {
     let dir = TempDir::new("db-notes-filter");
     let db = Db::open(&dir.path().join("notes.db")).unwrap();
 
@@ -104,27 +102,25 @@ fn fulltext_search_and_multi_category_filter() {
     for note in [&mut work, &mut reading, &mut misc] {
         db.upsert_note(note).unwrap();
     }
-    db.set_note_category(work.id, Some("工作")).unwrap();
-    db.set_note_category(reading.id, Some("读书")).unwrap();
+    db.set_note_tags(work.id, &[String::from("工作")])
+        .unwrap();
+    db.set_note_tags(reading.id, &[String::from("读书")])
+        .unwrap();
 
-    let filter = |query: &str, categories: &[&str]| NoteFilter {
+    let filter = |query: &str| NoteFilter {
         query: query.to_string(),
-        categories: categories.iter().map(|name| name.to_string()).collect(),
         ..NoteFilter::default()
     };
 
     // 标题命中（Work plan）与正文命中（Reading notes）都返回
     assert_eq!(
-        sorted_titles(db.notes(&filter("Work", &[])).unwrap()),
+        sorted_titles(db.notes(&filter("Work")).unwrap()),
         ["Reading notes", "Work plan"]
     );
-    // 分类多选为"或"：命中任一分类即可，未分类笔记不返回
-    assert_eq!(
-        sorted_titles(db.notes(&filter("", &["工作", "读书"])).unwrap()),
-        ["Reading notes", "Work plan"]
-    );
-    assert_eq!(
-        sorted_titles(db.notes(&filter("", &["工作"])).unwrap()),
-        ["Work plan"]
-    );
+    // 标签筛选：仅挂载「工作」的笔记命中
+    let tagged = NoteFilter {
+        tags: vec![String::from("工作")],
+        ..NoteFilter::default()
+    };
+    assert_eq!(sorted_titles(db.notes(&tagged).unwrap()), ["Work plan"]);
 }

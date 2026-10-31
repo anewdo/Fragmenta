@@ -19,8 +19,6 @@ pub enum NoteSort {
 pub struct NoteFilter {
     /// 关键词（空串 = 不筛选）：标题与正文都参与匹配。
     pub query: String,
-    /// 分类（空 = 不筛选；笔记归属任一选中的分类即命中）。
-    pub categories: Vec<String>,
     /// 标签（空 = 不筛选；笔记需同时挂有全部所选标签）。
     pub tags: Vec<String>,
     /// 列表排序方式。

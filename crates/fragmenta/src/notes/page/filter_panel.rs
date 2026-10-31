@@ -1,4 +1,4 @@
-//! 筛选 Popover 内容面板：分类 / 标签草稿与选项树。
+//! 筛选 Popover 内容面板：标签草稿与选项树。
 //!
 //! 面板是独立 `Entity`：草稿与选项快照都在面板内维护，笔记页重绘（含卡片
 //! hover）只复用一个实体元素，不再克隆选项或重建整棵筛选树。
@@ -16,12 +16,11 @@ use gpui_kit::*;
 use super::NotesPage;
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
 
-/// 筛选面板中的可选项：左侧名称（可带图标），右侧引用计数。
+/// 筛选面板中的可选项：左侧名称，右侧引用计数。
 fn filter_option(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     count: i64,
-    icon: Option<IconName>,
     selected: bool,
     theme: &Theme,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -52,20 +51,11 @@ fn filter_option(
         .cursor_pointer()
         .when(!selected, |el| el.hover(move |style| style.bg(hover)))
         .child(
-            h_flex()
+            div()
                 .min_w_0()
-                .items_center()
-                .gap_1()
-                .when_some(icon, |el, icon| {
-                    el.child(Icon::new(icon).with_size(Size::XSmall))
-                })
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_role(TextRole::Meta)
-                        .child(label),
-                ),
+                .truncate()
+                .text_role(TextRole::Meta)
+                .child(label),
         )
         .child(
             div()
@@ -80,10 +70,7 @@ fn filter_option(
 /// 筛选面板：草稿在面板内维护，点“完成筛选”才写回笔记页。
 pub(super) struct FilterPanel {
     page: WeakEntity<NotesPage>,
-    categories: Vec<TaxonomyEntry>,
     tags: Vec<TaxonomyEntry>,
-    note_count: i64,
-    draft_categories: Vec<String>,
     draft_tags: Vec<String>,
 }
 
@@ -91,29 +78,18 @@ impl FilterPanel {
     pub(super) fn new(page: WeakEntity<NotesPage>) -> Self {
         Self {
             page,
-            categories: Vec::new(),
             tags: Vec::new(),
-            note_count: 0,
-            draft_categories: Vec::new(),
             draft_tags: Vec::new(),
         }
     }
 
-    /// 更新筛选选项快照（笔记页拉取列表 / 分类 / 标签后推送）。
-    pub(super) fn sync_options(
-        &mut self,
-        categories: Vec<TaxonomyEntry>,
-        tags: Vec<TaxonomyEntry>,
-        note_count: i64,
-    ) {
-        self.categories = categories;
+    /// 更新筛选选项快照（笔记页拉取标签后推送）。
+    pub(super) fn sync_options(&mut self, tags: Vec<TaxonomyEntry>) {
         self.tags = tags;
-        self.note_count = note_count;
     }
 
     /// 草稿重置为已生效条件（Popover 打开 / 关闭时）。
-    pub(super) fn reset_draft(&mut self, categories: &[String], tags: &[String]) {
-        self.draft_categories = categories.to_vec();
+    pub(super) fn reset_draft(&mut self, tags: &[String]) {
         self.draft_tags = tags.to_vec();
     }
 }
@@ -126,56 +102,6 @@ impl Render for FilterPanel {
         let muted = theme.muted_foreground;
         let border = theme.border;
 
-        let mut category_grid = div().grid().grid_cols(2).gap_2();
-        category_grid = category_grid.child(
-            filter_option(
-                ("filter-cat", 0usize),
-                "所有笔记",
-                self.note_count,
-                Some(IconName::LibraryBig),
-                self.draft_categories.is_empty(),
-                theme,
-                {
-                    let weak = weak.clone();
-                    move |_, _, cx| {
-                        let _ = weak.update(cx, |panel, cx| {
-                            panel.draft_categories.clear();
-                            cx.notify();
-                        });
-                    }
-                },
-            )
-            .w_full(),
-        );
-        for (ix, entry) in self.categories.iter().enumerate() {
-            let weak = weak.clone();
-            let name = entry.name.clone();
-            let selected = self.draft_categories.contains(&entry.name);
-            category_grid = category_grid.child(
-                filter_option(
-                    ("filter-cat", ix + 1),
-                    entry.name.clone(),
-                    entry.note_count,
-                    Some(IconName::Folder),
-                    selected,
-                    theme,
-                    move |_, _, cx| {
-                        let _ = weak.update(cx, |panel, cx| {
-                            if let Some(pos) =
-                                panel.draft_categories.iter().position(|c| c == &name)
-                            {
-                                panel.draft_categories.remove(pos);
-                            } else {
-                                panel.draft_categories.push(name.clone());
-                            }
-                            cx.notify();
-                        });
-                    },
-                )
-                .w_full(),
-            );
-        }
-
         let tag_chips = h_flex()
             .flex_wrap()
             .gap_1()
@@ -187,7 +113,6 @@ impl Render for FilterPanel {
                     ("filter-tag", ix),
                     format!("#{}", entry.name),
                     entry.note_count,
-                    None,
                     selected,
                     theme,
                     move |_, _, cx| {
@@ -240,7 +165,6 @@ impl Render for FilterPanel {
                                 let weak = weak.clone();
                                 move |_, _, cx| {
                                     let _ = weak.update(cx, |panel, cx| {
-                                        panel.draft_categories.clear();
                                         panel.draft_tags.clear();
                                         cx.notify();
                                     });
@@ -248,13 +172,6 @@ impl Render for FilterPanel {
                             }),
                     ),
             )
-            .child(
-                div()
-                    .text_role(TextRole::ControlLabel)
-                    .text_color(muted)
-                    .child("分类维度"),
-            )
-            .child(category_grid)
             .child(
                 div()
                     .text_role(TextRole::ControlLabel)
@@ -288,12 +205,9 @@ impl Render for FilterPanel {
                                     let Some(panel) = weak.upgrade() else {
                                         return;
                                     };
-                                    let (categories, tags) = {
-                                        let panel = panel.read(cx);
-                                        (panel.draft_categories.clone(), panel.draft_tags.clone())
-                                    };
+                                    let tags = panel.read(cx).draft_tags.clone();
                                     let _ = page.update(cx, |page, cx| {
-                                        page.apply_filter_draft(categories, tags, cx)
+                                        page.apply_filter_draft(tags, cx)
                                     });
                                 }
                             }),

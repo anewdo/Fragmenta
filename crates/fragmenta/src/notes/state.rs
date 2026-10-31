@@ -62,7 +62,6 @@ impl NoteDraft {
             },
             title: self.title.clone(),
             content: self.content.clone(),
-            category: None,
             tags: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -158,7 +157,6 @@ impl NotesState {
             id: 0,
             title: String::new(),
             content: String::new(),
-            category: None,
             tags: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -176,18 +174,6 @@ impl NotesState {
         Ok(())
     }
 
-    /// 设置笔记分类（唯一、可清除、新分类自动建立）；成功后广播 `Changed`。
-    pub fn set_category(
-        &mut self,
-        id: i64,
-        category: Option<&str>,
-        cx: &mut Context<Self>,
-    ) -> DbResult<()> {
-        self.db.set_note_category(id, category)?;
-        cx.emit(NotesEvent::Changed);
-        Ok(())
-    }
-
     /// 全量替换笔记标签（入参先经 `normalize_tags` 规范化）；成功后广播 `Changed`。
     pub fn set_tags(&mut self, id: i64, tags: Vec<String>, cx: &mut Context<Self>) -> DbResult<()> {
         self.db.set_note_tags(id, &tags)?;
@@ -198,11 +184,6 @@ impl NotesState {
     /// read-through 直查（D5：本地 SQLite 亚毫秒查询，无缓存）。
     pub fn notes(&self, filter: &NoteFilter) -> DbResult<Vec<Note>> {
         self.db.notes(filter)
-    }
-
-    /// read-through：全部笔记数量（筛选面板计数）。
-    pub fn note_count(&self) -> DbResult<i64> {
-        self.db.note_count()
     }
 
     /// 取出该槽并落库，返回结果；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。

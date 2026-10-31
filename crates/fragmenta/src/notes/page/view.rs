@@ -82,7 +82,7 @@ impl NotesPage {
             .into_any_element()
     }
 
-    /// 筛选 Popover：分类（多选）+ 标签（多选）草稿，点击"完成筛选"才生效；
+    /// 筛选 Popover：标签（多选）草稿，点击"完成筛选"才生效；
     /// 点击面板外关闭时草稿丢弃，恢复为已生效条件。
     ///
     /// 触发器是搜索框右侧的滑杆图标，面板按列表内容宽度固定（向下展开），
@@ -90,7 +90,7 @@ impl NotesPage {
     /// 面板内容是独立实体：页面重绘只复用元素，不克隆选项、不重建筛选树。
     fn filter_popover(&self, weak: &WeakEntity<Self>) -> Popover {
         let open = self.filter_open;
-        let active_count = self.selected_categories.len() + self.selected_tags.len();
+        let active_count = self.selected_tags.len();
         let panel = self.filter_panel.clone();
         let open_weak = weak.clone();
         Popover::new("notes-filter")
@@ -161,7 +161,7 @@ impl NotesPage {
                 .tooltip(tooltip)
         };
 
-        let taxonomy = action("note-taxonomy", IconName::SquarePen, "分类与标签").on_click({
+        let taxonomy = action("note-taxonomy", IconName::SquarePen, "标签").on_click({
             let weak = weak.clone();
             let note = note.clone();
             move |_, window, cx| {

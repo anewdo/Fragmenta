@@ -29,12 +29,6 @@ pub enum DbError {
     /// 操作的目标待办不存在。
     #[error("待办 {0} 不存在")]
     TodoNotFound(i64),
-    /// 操作的目标分类不存在。
-    #[error("分类 {0} 不存在")]
-    CategoryNotFound(String),
-    /// 重命名的目标分类名已被占用。
-    #[error("分类 {0} 已存在")]
-    CategoryExists(String),
     /// 操作的目标标签不存在。
     #[error("标签 {0} 不存在")]
     TagNotFound(String),

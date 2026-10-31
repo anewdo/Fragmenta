@@ -200,7 +200,6 @@ mod tests {
             id: 0,
             title: "已落库笔记".into(),
             content: "迁移前内容".into(),
-            category: None,
             tags: vec![],
             created_at: now,
             updated_at: now,

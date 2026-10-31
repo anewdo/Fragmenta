@@ -34,8 +34,6 @@ pub(crate) struct NotesPage {
     query_input: Entity<InputState>,
     /// 列表排序方式。
     sort: NoteSort,
-    /// 分类筛选（多选，笔记归属任一选中分类即命中）。
-    selected_categories: Vec<String>,
     /// 标签筛选（多选，笔记需同时挂有全部所选标签）。
     selected_tags: Vec<String>,
     /// 筛选 Popover 是否打开（受控：关闭时丢弃草稿）。
@@ -53,7 +51,7 @@ pub(crate) struct NotesPage {
     hovered_note: Option<i64>,
     /// 悬停序号：每进入一张卡片递增，驱动淡入动画重启。
     hover_seq: usize,
-    /// 分类与标签弹窗会话（None = 未打开 / 已关闭）。
+    /// 标签弹窗会话（None = 未打开 / 已关闭）。
     taxonomy_modal: Option<TaxonomyModal>,
     /// 弹窗动画序号：每次打开递增，保证淡入淡出动画使用全新元素 id。
     taxonomy_seq: usize,
@@ -101,7 +99,6 @@ impl NotesPage {
             notes,
             query_input,
             sort: NoteSort::default(),
-            selected_categories: Vec::new(),
             selected_tags: Vec::new(),
             filter_open: false,
             filter_panel,
@@ -127,17 +124,14 @@ impl NotesPage {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let filter = NoteFilter {
             query: self.query_input.read(cx).value().to_string(),
-            categories: self.selected_categories.clone(),
             tags: self.selected_tags.clone(),
             sort: self.sort,
         };
         let store = self.notes.read(cx);
         self.list = store.notes(&filter).map_err(|err| err.to_string());
-        let note_count = store.note_count().unwrap_or(0);
         // 选项查询失败按空处理：列表错误已单独占位呈现
         let taxonomy = cx.global::<TaxonomyStore>().0.clone();
         let taxonomy = taxonomy.read(cx);
-        let categories = taxonomy.categories().unwrap_or_default();
         let tags = taxonomy.tags().unwrap_or_default();
         self.tag_colors = tags
             .iter()
@@ -150,7 +144,7 @@ impl NotesPage {
             .collect();
         self.all_tags = tags.clone();
         self.filter_panel.update(cx, |panel, cx| {
-            panel.sync_options(categories, tags, note_count);
+            panel.sync_options(tags);
             cx.notify();
         });
         // 列表重拉后悬停卡片可能已消失，淡入状态随之复位
@@ -167,28 +161,20 @@ impl NotesPage {
 
     /// 是否存在任一生效的筛选条件（空态文案区分"还没有笔记"与"没有匹配"）。
     fn has_active_filter(&self, cx: &App) -> bool {
-        !self.query_input.read(cx).value().is_empty()
-            || !self.selected_categories.is_empty()
-            || !self.selected_tags.is_empty()
+        !self.query_input.read(cx).value().is_empty() || !self.selected_tags.is_empty()
     }
 
     /// 筛选 Popover 开 / 关时把草稿重置为已生效条件（关闭即丢弃未确认选择）。
     fn reset_filter_draft(&mut self, cx: &mut Context<Self>) {
         self.filter_panel.update(cx, |panel, cx| {
-            panel.reset_draft(&self.selected_categories, &self.selected_tags);
+            panel.reset_draft(&self.selected_tags);
             cx.notify();
         });
         cx.notify();
     }
 
     /// 确认筛选：草稿写回生效条件并重拉列表。
-    fn apply_filter_draft(
-        &mut self,
-        categories: Vec<String>,
-        tags: Vec<String>,
-        cx: &mut Context<Self>,
-    ) {
-        self.selected_categories = categories;
+    fn apply_filter_draft(&mut self, tags: Vec<String>, cx: &mut Context<Self>) {
         self.selected_tags = tags;
         self.filter_open = false;
         self.refresh(cx);
@@ -232,10 +218,9 @@ impl NotesPage {
     /// 的 `Changed` 会同步触发订阅重拉，新卡片随列表快照返回，直接载入
     /// 即可。新笔记没有待写槽，无需 `flush_now`，也不必逐段 `refresh`。
     fn create_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_categories.clear();
         self.selected_tags.clear();
         self.filter_panel.update(cx, |panel, cx| {
-            panel.reset_draft(&[], &[]);
+            panel.reset_draft(&[]);
             cx.notify();
         });
         self.query_input

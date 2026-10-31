@@ -987,7 +987,6 @@ mod tests {
             id: 0,
             title: title.into(),
             content: content.into(),
-            category: None,
             tags: Vec::new(),
             created_at: now,
             updated_at: now,

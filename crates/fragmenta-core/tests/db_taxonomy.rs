@@ -1,4 +1,4 @@
-//! 分类与标签持久层黑盒集成测试。
+//! 标签持久层黑盒集成测试。
 //!
 //! 经公共 API（`Db::open` + 读写接口，真实 SQLite）验证条目查询（颜色 /
 //! 引用计数 / 名称排序）、标签实体化（失去引用不清理，ADR-0008）以及
@@ -16,7 +16,6 @@ fn upsert(db: &Db, title: &str) -> i64 {
         id: 0,
         title: title.into(),
         content: String::new(),
-        category: None,
         tags: Vec::new(),
         created_at: now,
         updated_at: now,
@@ -34,21 +33,9 @@ fn overview_returns_counts_colors_and_sort_order() {
 
     let a = upsert(&db, "A");
     let b = upsert(&db, "B");
-    db.set_note_category(a, Some("工作")).unwrap();
-    db.set_note_category(b, Some("生活")).unwrap();
     db.set_note_tags(a, &[String::from("急"), String::from("记录")])
         .unwrap();
     db.set_note_tags(b, &[String::from("急")]).unwrap();
-
-    let categories = db.categories_with_usage().unwrap();
-    let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
-    // SQLite 按字节序：工 (U+5DE5) < 生 (U+751F)
-    assert_eq!(names, ["工作", "生活"]);
-    assert!(
-        categories
-            .iter()
-            .all(|c| c.note_count == 1 && c.color.is_none())
-    );
 
     let tags = db.tags_with_usage().unwrap();
     let tag_names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
@@ -59,23 +46,18 @@ fn overview_returns_counts_colors_and_sort_order() {
 
     // 直写颜色后读回（选色写接口属后续 ticket，此处验证读路径）
     raw_conn(&db_path)
-        .execute(
-            "UPDATE categories SET color = '#2196F3' WHERE name = '工作'",
-            [],
-        )
+        .execute("UPDATE tags SET color = '#2196F3' WHERE name = '急'", [])
         .unwrap();
-    let categories = db.categories_with_usage().unwrap();
-    let work = categories.iter().find(|c| c.name == "工作").unwrap();
-    assert_eq!(work.color.as_deref(), Some("#2196F3"));
+    let tags = db.tags_with_usage().unwrap();
+    let urgent = tags.iter().find(|t| t.name == "急").unwrap();
+    assert_eq!(urgent.color.as_deref(), Some("#2196F3"));
 
-    let category_colors = db.category_colors().unwrap();
+    let tag_colors = db.tag_colors().unwrap();
     assert_eq!(
-        category_colors.get("工作").cloned().flatten(),
+        tag_colors.get("急").cloned().flatten(),
         Some(String::from("#2196F3"))
     );
-    assert_eq!(category_colors.get("生活"), Some(&None));
-    let tag_colors = db.tag_colors().unwrap();
-    assert_eq!(tag_colors.get("急"), Some(&None));
+    assert_eq!(tag_colors.get("记录"), Some(&None));
 }
 
 /// 标签实体化（ADR-0008）：摘光挂载与删笔记后，标签仍留存于库。
@@ -105,30 +87,21 @@ fn tags_survive_detachment_and_note_deletion() {
     assert_eq!(db.tags().unwrap(), vec![String::from("急")]);
 }
 
-/// 新建分类 / 标签：名称先 trim，默认无色零引用；重名、空白名报错且不产生实体。
+/// 新建标签：名称先 trim，默认无色零引用；重名、空白名报错且不产生实体。
 #[test]
 fn create_reports_duplicates_and_blank_names() {
     let dir = TempDir::new("db-taxonomy-create");
     let db = Db::open(&dir.path().join("create.db")).unwrap();
 
     // 成功：首尾空白被 trim，默认无色、零引用
-    db.create_category(" 工作 ").unwrap();
-    db.create_tag("急").unwrap();
-    let categories = db.categories_with_usage().unwrap();
-    assert_eq!(categories.len(), 1);
-    assert_eq!(categories[0].name, "工作");
-    assert_eq!(categories[0].color, None);
-    assert_eq!(categories[0].note_count, 0);
+    db.create_tag(" 急 ").unwrap();
     let tags = db.tags_with_usage().unwrap();
     assert_eq!(tags.len(), 1);
     assert_eq!(tags[0].name, "急");
     assert_eq!(tags[0].color, None);
+    assert_eq!(tags[0].note_count, 0);
 
     // 重名报错，且不产生新实体
-    assert!(matches!(
-        db.create_category("工作").unwrap_err(),
-        DbError::CategoryExists(_)
-    ));
     assert!(matches!(
         db.create_tag("急").unwrap_err(),
         DbError::TagExists(_)
@@ -136,14 +109,9 @@ fn create_reports_duplicates_and_blank_names() {
 
     // 纯空白报错，且不产生实体
     assert!(matches!(
-        db.create_category("   ").unwrap_err(),
-        DbError::BlankName
-    ));
-    assert!(matches!(
         db.create_tag("   ").unwrap_err(),
         DbError::BlankName
     ));
-    assert_eq!(db.categories_with_usage().unwrap().len(), 1);
     assert_eq!(db.tags_with_usage().unwrap().len(), 1);
 }
 
@@ -217,47 +185,6 @@ fn rename_tag_moves_mounts_and_keeps_color() {
     ));
 }
 
-/// 删除分类：相关笔记归属置空、其他分类与笔记本身完好；条目不存在报错。
-#[test]
-fn delete_category_clears_note_assignments() {
-    let dir = TempDir::new("db-taxonomy-delete-category");
-    let db = Db::open(&dir.path().join("delete-category.db")).unwrap();
-
-    let a = upsert(&db, "A");
-    let b = upsert(&db, "B");
-    let c = upsert(&db, "C");
-    db.set_note_category(a, Some("工作")).unwrap();
-    db.set_note_category(b, Some("工作")).unwrap();
-    db.set_note_category(c, Some("生活")).unwrap();
-
-    db.delete_category("工作").unwrap();
-
-    // 归属置空、其他分类不受影响、笔记内容与数量完好
-    let notes = db.notes(&NoteFilter::default()).unwrap();
-    assert_eq!(notes.len(), 3);
-    let category_of = |id: i64| {
-        notes
-            .iter()
-            .find(|note| note.id == id)
-            .unwrap()
-            .category
-            .clone()
-    };
-    assert_eq!(category_of(a), None);
-    assert_eq!(category_of(b), None);
-    assert_eq!(category_of(c), Some(String::from("生活")));
-
-    let categories = db.categories_with_usage().unwrap();
-    assert_eq!(categories.len(), 1);
-    assert_eq!(categories[0].name, "生活");
-
-    // 条目不存在报错
-    assert!(matches!(
-        db.delete_category("工作").unwrap_err(),
-        DbError::CategoryNotFound(_)
-    ));
-}
-
 /// 删除标签：全部挂载被摘除、未涉及标签与笔记本身完好；条目不存在报错。
 #[test]
 fn delete_tag_detaches_all_mounts() {
@@ -292,35 +219,6 @@ fn delete_tag_detaches_all_mounts() {
     ));
 }
 
-/// 分类重命名（既有接口的契约回归）：成功路径挂载跟随，错误路径
-/// （源不存在 / 目标重名）不产生任何变更。
-#[test]
-fn rename_category_moves_mounts_and_reports_errors() {
-    let dir = TempDir::new("db-taxonomy-rename-category");
-    let db = Db::open(&dir.path().join("rename-category.db")).unwrap();
-
-    let a = upsert(&db, "A");
-    db.set_note_category(a, Some("工作")).unwrap();
-    db.create_category("生活").unwrap();
-
-    // 源不存在 / 目标重名报错，且不产生任何变更
-    assert!(matches!(
-        db.rename_category("不存在", "任意").unwrap_err(),
-        DbError::CategoryNotFound(_)
-    ));
-    assert!(matches!(
-        db.rename_category("工作", "生活").unwrap_err(),
-        DbError::CategoryExists(_)
-    ));
-    assert_eq!(db.categories().unwrap(), ["工作", "生活"]);
-
-    // 成功路径：笔记归属跟随新名
-    db.rename_category("工作", "事务").unwrap();
-    let notes = db.notes(&NoteFilter::default()).unwrap();
-    assert_eq!(notes[0].category.as_deref(), Some("事务"));
-    assert_eq!(db.categories().unwrap(), ["事务", "生活"]);
-}
-
 /// 设色 / 置空：颜色落库并经条目查询与名称映射读回；重开 Db 颜色不变、
 /// 重命名后颜色保留；置 None 恢复未选色；条目不存在报错。
 #[test]
@@ -329,24 +227,11 @@ fn set_color_and_clear_persist_across_reopen() {
     let db_path = dir.path().join("set-color.db");
     let db = Db::open(&db_path).unwrap();
 
-    db.create_category("工作").unwrap();
     db.create_tag("急").unwrap();
 
     // 设色：条目查询与名称→颜色映射一致读回
-    db.set_category_color("工作", Some("#2196F3")).unwrap();
     db.set_tag_color("急", Some("#F44336")).unwrap();
-    let assert_colors = |db: &Db| {
-        let work = db
-            .categories_with_usage()
-            .unwrap()
-            .into_iter()
-            .find(|c| c.name == "工作")
-            .unwrap();
-        assert_eq!(work.color.as_deref(), Some("#2196F3"));
-        assert_eq!(
-            db.category_colors().unwrap().get("工作").cloned().flatten(),
-            Some(String::from("#2196F3"))
-        );
+    let assert_color = |db: &Db| {
         let urgent = db
             .tags_with_usage()
             .unwrap()
@@ -359,39 +244,28 @@ fn set_color_and_clear_persist_across_reopen() {
             Some(String::from("#F44336"))
         );
     };
-    assert_colors(&db);
+    assert_color(&db);
 
     // 持久性：重开 Db 颜色不变；重命名后颜色随实体保留
     drop(db);
     let db = Db::open(&db_path).unwrap();
-    assert_colors(&db);
-    db.rename_category("工作", "事务").unwrap();
+    assert_color(&db);
     db.rename_tag("急", "紧急").unwrap();
-    let categories = db.categories_with_usage().unwrap();
-    let work = categories.iter().find(|c| c.name == "事务").unwrap();
-    assert_eq!(work.color.as_deref(), Some("#2196F3"));
     let tags = db.tags_with_usage().unwrap();
     let urgent = tags.iter().find(|t| t.name == "紧急").unwrap();
     assert_eq!(urgent.color.as_deref(), Some("#F44336"));
 
     // 置空：恢复未选色
-    db.set_category_color("事务", None).unwrap();
     db.set_tag_color("紧急", None).unwrap();
-    assert_eq!(db.category_colors().unwrap().get("事务"), Some(&None));
     assert_eq!(db.tag_colors().unwrap().get("紧急"), Some(&None));
 
     // 条目不存在报错（设色与置空同路径）
-    assert!(matches!(
-        db.set_category_color("不存在", Some("#2196F3"))
-            .unwrap_err(),
-        DbError::CategoryNotFound(_)
-    ));
     assert!(matches!(
         db.set_tag_color("不存在", Some("#F44336")).unwrap_err(),
         DbError::TagNotFound(_)
     ));
     assert!(matches!(
-        db.set_category_color("不存在", None).unwrap_err(),
-        DbError::CategoryNotFound(_)
+        db.set_tag_color("不存在", None).unwrap_err(),
+        DbError::TagNotFound(_)
     ));
 }

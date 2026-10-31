@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::notes::NotesPage;
 use crate::settings::SettingsPage;
-use crate::taxonomy::{TaxonomyKind, TaxonomyPage};
+use crate::taxonomy::TaxonomyPage;
 use crate::todos::TodosPage;
 use crate::ui::layout::LayoutClass;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
@@ -35,7 +35,6 @@ impl Global for MainWindow {}
 enum Page {
     Notes,
     Todos,
-    Categories,
     Tags,
     Settings,
 }
@@ -147,7 +146,7 @@ fn initial_bounds(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
 }
 
 /// 主窗口 shell：自绘标题栏 + 侧栏导航（可拖宽 / 可收起，带动画）+
-/// 三页常驻 Entity 路由。
+/// 四页常驻 Entity 路由。
 struct MainShell {
     page: Page,
     sidebar_collapsed: bool,
@@ -161,7 +160,6 @@ struct MainShell {
     sidebar_anim_seq: u64,
     notes: Entity<NotesPage>,
     todos: Entity<TodosPage>,
-    categories: Entity<TaxonomyPage>,
     tags: Entity<TaxonomyPage>,
     settings: Entity<SettingsPage>,
     /// toast 浮层（如导出结果报告）：toast 状态变化时重绘 shell。
@@ -222,8 +220,7 @@ impl MainShell {
             sidebar_anim_seq: 0,
             notes: cx.new(|cx| NotesPage::new(window, cx)),
             todos: cx.new(|cx| TodosPage::new(window, cx)),
-            categories: cx.new(|cx| TaxonomyPage::new(TaxonomyKind::Category, window, cx)),
-            tags: cx.new(|cx| TaxonomyPage::new(TaxonomyKind::Tag, window, cx)),
+            tags: cx.new(|cx| TaxonomyPage::new(window, cx)),
             settings: cx.new(|cx| SettingsPage::new(window, cx)),
             toast,
             _appearance_sub: appearance_sub,
@@ -339,7 +336,6 @@ impl Render for MainShell {
                     .children([
                         self.nav_item(Page::Notes, "笔记", IconName::NotebookPen, collapsed, cx),
                         self.nav_item(Page::Todos, "待办", IconName::SquareCheckBig, collapsed, cx),
-                        self.nav_item(Page::Categories, "分类", IconName::Folder, collapsed, cx),
                         self.nav_item(Page::Tags, "标签", IconName::Tags, collapsed, cx),
                         self.nav_item(Page::Settings, "设置", IconName::Settings, collapsed, cx),
                     ]),
@@ -426,7 +422,6 @@ impl Render for MainShell {
             .child(div().flex_1().min_h_0().child(match self.page {
                 Page::Notes => self.notes.clone().into_any_element(),
                 Page::Todos => self.todos.clone().into_any_element(),
-                Page::Categories => self.categories.clone().into_any_element(),
                 Page::Tags => self.tags.clone().into_any_element(),
                 Page::Settings => self.settings.clone().into_any_element(),
             }))

@@ -1,9 +1,9 @@
-//! 内置色板（ADR-0008）：6 色 Material Design 500 档，作为分类 / 标签
-//! 管理页选色 Popover 的内置色来源；另有 `#RRGGBB` 颜色解析，供读回
+//! 内置色板（ADR-0008）：6 色 Material Design 500 档，作为标签管理页
+//! 选色 Popover 的内置色来源；另有 `#RRGGBB` 颜色解析，供读回
 //! DB 中用户选定的持久颜色。
 //!
 //! 应用层纯逻辑模块（仅用颜色数据类型，零 UI 组件依赖）：
-//! - 分类与标签的展示颜色由用户选定、持久存于 DB（`color` 列）；
+//! - 标签的展示颜色由用户选定、持久存于 DB（`color` 列）；
 //! - 未选色的条目以主题中性样式渲染；
 //! - 任意取色器（ticket 03）产出的颜色同样以 `#RRGGBB` 落库。
 
@@ -15,7 +15,7 @@ pub(crate) fn filled_foreground() -> Hsla {
 }
 
 /// 6 色 Material Design 取色盘：六个不同 hue 家族、同一 500 亮度档。
-/// 分类 / 标签选色 Popover 的内置色来源。
+/// 标签选色 Popover 的内置色来源。
 pub(crate) fn palette_colors() -> [Hsla; 6] {
     [
         rgb(0xF44336).into(), // Red 500

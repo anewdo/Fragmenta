@@ -1,4 +1,4 @@
-//! 分类 / 标签管理页视图：两页复用同一组件（`TaxonomyKind` 区分装配）。
+//! 标签管理页视图。
 //!
 
 use fragmenta_core::model::TaxonomyEntry;
@@ -17,7 +17,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::{TaxonomyEvent, TaxonomyKind, TaxonomyState, TaxonomyStore};
+use super::{TaxonomyEvent, TaxonomyState, TaxonomyStore};
 use crate::notes::{NotesEvent, NotesStore};
 use crate::ui::dialog_motion;
 use crate::ui::focus::{TextFieldExt as _, input_border};
@@ -45,9 +45,8 @@ struct ColorSession {
     _sub: Subscription,
 }
 
-/// 分类 / 标签管理页：常驻于主窗口 shell，订阅笔记广播刷新列表。
+/// 标签管理页：常驻于主窗口 shell，订阅笔记广播刷新列表。
 pub(crate) struct TaxonomyPage {
-    kind: TaxonomyKind,
     state: Entity<TaxonomyState>,
     /// 新建输入行：回车即建（常驻于页面）。
     create_input: Entity<InputState>,
@@ -57,7 +56,7 @@ pub(crate) struct TaxonomyPage {
     color_popover: Option<ColorSession>,
     /// 条目列表快照（名称排序）。
     list: Result<Vec<TaxonomyEntry>, String>,
-    /// 笔记写操作会改变分类 / 标签集合（挂载或建实体），订阅其广播刷新。
+    /// 笔记写操作会改变标签集合（挂载或建实体），订阅其广播刷新。
     _notes_changed: Subscription,
     /// 标签编辑弹窗等外部入口建实体时同步刷新（管理页自身操作也会触发，重拉无害）。
     _taxonomy_changed: Subscription,
@@ -66,7 +65,7 @@ pub(crate) struct TaxonomyPage {
 }
 
 impl TaxonomyPage {
-    pub(crate) fn new(kind: TaxonomyKind, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let state = cx.global::<TaxonomyStore>().0.clone();
         let notes = cx.global::<NotesStore>().0.clone();
         let notes_changed = cx.subscribe(&notes, |this, _, _: &NotesEvent, cx| {
@@ -75,8 +74,9 @@ impl TaxonomyPage {
         let taxonomy_changed = cx.subscribe(&state, |this, _, _: &TaxonomyEvent, cx| {
             this.refresh(cx);
         });
-        let create_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(kind.create_placeholder()));
+        let create_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("新建标签，回车保存")
+        });
         // 回车新建：空白仅清空、重名以通知报错且保留输入、成功即清空刷新。
         let weak = cx.entity().downgrade();
         let create_sub = window.subscribe(&create_input, cx, move |input, event, window, app| {
@@ -87,7 +87,6 @@ impl TaxonomyPage {
             let _ = weak.update(app, |this, cx| this.create(name, window, cx));
         });
         let mut this = Self {
-            kind,
             state,
             create_input,
             rename: None,
@@ -101,10 +100,10 @@ impl TaxonomyPage {
         this
     }
 
-    /// 重新拉取本种类条目列表。
+    /// 重新拉取标签列表。
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let store = self.state.read(cx);
-        self.list = self.kind.entries(store).map_err(|err| err.to_string());
+        self.list = store.tags().map_err(|err| err.to_string());
         cx.notify();
     }
 
@@ -117,10 +116,7 @@ impl TaxonomyPage {
                 .update(cx, |state, cx| state.set_value("", window, cx));
             return;
         }
-        let kind = self.kind;
-        let result = self
-            .state
-            .update(cx, |state, cx| state.create(kind, name, cx));
+        let result = self.state.update(cx, |state, cx| state.create(name, cx));
         match result {
             Ok(()) => {
                 self.create_input
@@ -144,7 +140,7 @@ impl TaxonomyPage {
             return;
         };
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder(self.kind.label());
+            let mut state = InputState::new(window, cx).placeholder("标签");
             state.set_value(entry.name, window, cx);
             state
         });
@@ -186,10 +182,9 @@ impl TaxonomyPage {
         };
         let to = to.trim();
         if !to.is_empty() && to != from {
-            let kind = self.kind;
             if let Err(err) = self
                 .state
-                .update(cx, |state, cx| state.rename(kind, &from, to, cx))
+                .update(cx, |state, cx| state.rename(&from, to, cx))
             {
                 toast::error(err.to_string(), window, cx);
             }
@@ -264,10 +259,9 @@ impl TaxonomyPage {
         let Some(name) = self.entry_name(id) else {
             return false;
         };
-        let kind = self.kind;
         match self
             .state
-            .update(cx, |state, cx| state.set_color(kind, &name, color, cx))
+            .update(cx, |state, cx| state.set_color(&name, color, cx))
         {
             Ok(()) => {
                 self.refresh(cx);
@@ -306,32 +300,25 @@ impl TaxonomyPage {
     }
 
     /// 删除确认：Danger 主按钮；被引用时警示「N 篇笔记正在使用」。
-    /// 确认后经 state 层删除（分类归属置空 / 标签挂载摘除由数据层完成），
-    /// 失败以通知呈现。
+    /// 确认后经 state 层删除（挂载摘除由数据层完成），失败以通知呈现。
     fn confirm_delete(
         &mut self,
         entry: &TaxonomyEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let kind = self.kind;
         let name = entry.name.clone();
         let description = match entry.note_count {
             0 => format!("「{name}」删除后无法恢复，确定要删除吗？"),
-            count => match kind {
-                TaxonomyKind::Category => {
-                    format!("{count} 篇笔记正在使用「{name}」，删除后这些笔记的归属将被置空。")
-                }
-                TaxonomyKind::Tag => {
-                    format!("{count} 篇笔记正在使用「{name}」，删除后将从这些笔记摘除该标签。")
-                }
-            },
+            count => {
+                format!("{count} 篇笔记正在使用「{name}」，删除后将从这些笔记摘除该标签。")
+            }
         };
         let weak = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
             let weak = weak.clone();
             dialog_motion::alert_dialog(alert.confirm())
-                .title(format!("删除{}", kind.label()))
+                .title("删除标签")
                 .description(description.clone())
                 .ok_text("删除")
                 .ok_variant(ButtonVariant::Danger)
@@ -343,7 +330,7 @@ impl TaxonomyPage {
                         weak.update(cx, |this, cx| {
                             if let Err(err) = this
                                 .state
-                                .update(cx, |state, cx| state.delete(kind, &name, cx))
+                                .update(cx, |state, cx| state.delete(&name, cx))
                             {
                                 toast::error(err.to_string(), window, cx);
                                 return false;
@@ -398,10 +385,11 @@ impl TaxonomyPage {
                     .media(
                         EmptyMedia::new()
                             .with_variant(EmptyMediaVariant::Icon)
-                            .child(Icon::new(self.kind.icon())),
+                            .child(Icon::new(IconName::Tags)),
                     )
-                    .title(EmptyTitle::new().child(self.kind.empty_title()))
-                    .description(EmptyDescription::new().child(self.kind.empty_description())),
+                    .title(EmptyTitle::new().child("还没有标签"))
+                    .description(EmptyDescription::new()
+                        .child("在上方输入行输入标签名，回车即可新建")),
             )
             .into_any_element()
     }
@@ -617,12 +605,12 @@ impl Render for TaxonomyPage {
 mod tests {
     use super::TaxonomyPage;
     use crate::notes::{NotesState, NotesStore};
-    use crate::taxonomy::{TaxonomyKind, TaxonomyState, TaxonomyStore};
+    use crate::taxonomy::{TaxonomyState, TaxonomyStore};
     use fragmenta_core::db::Db;
     use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext, WindowOptions, hsla};
     use std::sync::Arc;
 
-    /// 装配分类管理页（真实内存 Db + 依赖的 global 登记）。
+    /// 装配标签管理页（真实内存 Db + 依赖的 global 登记）。
     fn open_page(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<TaxonomyPage>, Arc<Db>) {
         cx.update(gpui_kit::init);
         let db = Arc::new(Db::open_in_memory().unwrap());
@@ -632,7 +620,7 @@ mod tests {
             cx.set_global(NotesStore(notes));
             cx.set_global(TaxonomyStore(taxonomy));
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| TaxonomyPage::new(TaxonomyKind::Category, window, cx))
+                cx.new(|cx| TaxonomyPage::new(window, cx))
             })
             .unwrap()
         });
@@ -659,7 +647,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            db.category_colors().unwrap().get("工作").cloned().flatten(),
+            db.tag_colors().unwrap().get("工作").cloned().flatten(),
             Some(String::from("#2196F3"))
         );
 
@@ -671,7 +659,7 @@ mod tests {
             });
         })
         .unwrap();
-        assert_eq!(db.category_colors().unwrap().get("工作"), Some(&None));
+        assert_eq!(db.tag_colors().unwrap().get("工作"), Some(&None));
 
         // 自定义取色：滑杆变更（Change 事件）经订阅即时落库，弹层保持打开
         cx.update_window(handle, |_, window, cx| {
@@ -686,7 +674,7 @@ mod tests {
         })
         .unwrap();
         let committed = db
-            .category_colors()
+            .tag_colors()
             .unwrap()
             .get("工作")
             .cloned()

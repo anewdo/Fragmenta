@@ -17,8 +17,8 @@ impl Db {
         let now = Local::now().to_rfc3339();
         if note.id == 0 {
             conn.execute(
-                "INSERT INTO notes (title, content, category_id, created_at, updated_at)
-                 VALUES (?1, ?2, NULL, ?3, ?3)",
+                "INSERT INTO notes (title, content, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?3)",
                 params![note.title, note.content, now],
             )?;
             note.id = conn.last_insert_rowid();
@@ -41,7 +41,7 @@ impl Db {
         Ok(())
     }
 
-    /// 删除笔记；note_tags 经外键级联清理。分类与标签均为显式实体，留存
+    /// 删除笔记；note_tags 经外键级联清理。标签为显式实体，留存。
     pub fn delete_note(&self, id: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
@@ -49,24 +49,17 @@ impl Db {
     }
 
     /// 按条件查询笔记（按 `filter.sort` 排序，同刻按 id 倒序），
-    /// 分类与标签经 JOIN 读回；标签按名称排序。
+    /// 标签经 JOIN 读回并按名称排序。
     pub fn notes(&self, filter: &NoteFilter) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
         query_notes(&conn, filter)
-    }
-
-    /// 全部笔记数量（筛选面板"所有笔记"计数）。
-    pub fn note_count(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))?)
     }
 }
 
 /// 主查询 + 标签批量补齐。
 fn query_notes(conn: &Connection, filter: &NoteFilter) -> Result<Vec<Note>> {
     let mut sql = String::from(
-        "SELECT n.id, n.title, n.content, c.name, n.created_at, n.updated_at
-         FROM notes n LEFT JOIN categories c ON c.id = n.category_id",
+        "SELECT n.id, n.title, n.content, n.created_at, n.updated_at FROM notes n",
     );
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<String> = Vec::new();
@@ -76,14 +69,6 @@ fn query_notes(conn: &Connection, filter: &NoteFilter) -> Result<Vec<Note>> {
         let pattern = like_pattern(&filter.query);
         values.push(pattern.clone());
         values.push(pattern);
-    }
-    if !filter.categories.is_empty() {
-        // 分类多选为"或"：笔记归属任一选中分类即命中
-        let placeholders = vec!["?"; filter.categories.len()].join(", ");
-        clauses.push(format!(
-            "n.category_id IN (SELECT id FROM categories WHERE name IN ({placeholders}))"
-        ));
-        values.extend(filter.categories.iter().cloned());
     }
     for tag in &filter.tags {
         clauses.push(
@@ -109,19 +94,17 @@ fn query_notes(conn: &Connection, filter: &NoteFilter) -> Result<Vec<Note>> {
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
-            row.get::<_, Option<String>>(3)?,
+            row.get::<_, String>(3)?,
             row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
         ))
     })?;
     let mut notes = Vec::new();
     for row in rows {
-        let (id, title, content, category, created, updated) = row?;
+        let (id, title, content, created, updated) = row?;
         notes.push(Note {
             id,
             title,
             content,
-            category,
             tags: Vec::new(),
             created_at: parse_timestamp(&created)?,
             updated_at: parse_timestamp(&updated)?,

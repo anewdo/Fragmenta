@@ -1,7 +1,7 @@
 //! 通用选色弹层内容：无色 + 内置 6 色色板 + 自定义（hex 输入 + HSL 滑杆，
 //! 状态机复用 kit `ColorPickerState`）。
 //!
-//! 分类 / 标签管理页与笔记页的标签编辑弹窗共用本模块；弹层打开 / 关闭与
+//! 标签管理页与笔记页的标签编辑弹窗共用本模块；弹层打开 / 关闭与
 //! 落库语义由调用方经 `on_select` 回调决定，自定义滑杆的即时变更由调用方
 //! 订阅 `ColorPickerEvent` 处理。
 
@@ -231,7 +231,7 @@ fn gradient_track(start: Hsla, end: Hsla) -> Div {
 }
 
 /// 取色 Popover 的矩形色块触发器：收起时显示当前颜色，未选色显示主题
-/// 中性面；hover 以底色提示可点，弹层打开时描边强调。分类 / 标签管理页与
+/// 中性面；hover 以底色提示可点，弹层打开时描边强调。标签管理页与
 /// 笔记页的标签编辑弹窗共用。
 #[derive(IntoElement)]
 pub(crate) struct ColorSwatchTrigger {

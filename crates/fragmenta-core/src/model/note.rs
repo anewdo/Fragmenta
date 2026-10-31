@@ -5,15 +5,13 @@ use chrono::{DateTime, Local};
 /// 摘要截断长度（字符数）。
 const SUMMARY_MAX_CHARS: usize = 50;
 
-/// 笔记：核心内容实体，标题 + Markdown 正文，至多一个分类、可挂多个标签（术语见 GLOSSARY.md）。
+/// 笔记：核心内容实体，标题 + Markdown 正文，可挂多个标签（术语见 GLOSSARY.md）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Note {
     pub id: i64,
     pub title: String,
     /// Markdown 源文。
     pub content: String,
-    /// 分类名，单值归属；至多一个。
-    pub category: Option<String>,
     /// 标签列表。
     pub tags: Vec<String>,
     pub created_at: DateTime<Local>,
