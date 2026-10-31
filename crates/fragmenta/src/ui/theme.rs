@@ -4,9 +4,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use fragmenta_core::settings::ThemeMode;
-use gpui_kit::App;
-use gpui_kit::Global;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode as KitThemeMode, ThemeRegistry};
+use gpui_kit::{App, Global};
 
 use super::tokens;
 

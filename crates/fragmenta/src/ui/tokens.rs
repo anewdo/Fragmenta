@@ -35,7 +35,8 @@ pub mod widths {
     pub const DIALOG: Pixels = px(380.);
     /// 笔记列表默认宽度：笔记页搜索栏与高级筛选面板沿用同一宽度。
     pub const NOTES_LIST: Pixels = px(fragmenta_core::settings::NOTES_LIST_WIDTH_DEFAULT_PX);
-    pub const TOAST_MAX: Pixels = px(360.);
+    /// 提示条固定宽度：短提示单行呈现，长错误自动换行。
+    pub const TOAST: Pixels = px(260.);
     /// 待办页日历栏宽：日历卡（7 × 40 单元格 + 内边距 24 + 边框 2）306 + 页面留白 24。
     pub const CALENDAR: Pixels = px(330.);
     pub const TILE: Pixels = px(360.);

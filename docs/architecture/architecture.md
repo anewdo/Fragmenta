@@ -93,13 +93,14 @@ flowchart TB
 | `notes/mod.rs`、`notes/state.rs`                                        | 笔记功能接口、共享状态、事件、草稿与保存状态 |
 | `notes/editor.rs`                                                         | 笔记专用编辑器及三种编辑模式                 |
 | `notes/page/`                                                             | 页面交互、视图、分类标签表单、标题栏操作区   |
+| `notes/components/`                                                       | 笔记内复用组件（标签徽片、可选标签矩形）     |
 | `todos/mod.rs`、`todos/state.rs`、`todos/page/`                       | 待办功能接口、状态、月历页面与表单           |
 | `settings/mod.rs`、`settings/state.rs`、`settings/page.rs`            | 设置功能接口、状态与页面                     |
 | `ui/theme.rs`、`themes/*.json`                                          | 内置主题定义、加载、预览与开发期热重载       |
 | `editor/mod.rs`、`editor/source.rs`、`editor/image_path.rs`           | 共享图库登记、源文本输入与图片路径插件       |
 | `windows/main/mod.rs`、`windows/main/home.rs`                           | 主窗口单例、导航与布局、首页占位             |
 | `windows/tile/mod.rs`、`windows/tile/open.rs`、`windows/tile/view.rs` | 磁贴创建、定位与交互                         |
-| `widgets/`、`utils/palette.rs`                                          | 通用分栏、徽片与取色盘                       |
+| `widgets/`、`utils/palette.rs`                                          | 通用分栏、提示条与取色盘                     |
 | `hotkey.rs`、`tray.rs`、`win32.rs`                                    | 热键、托盘与平台能力                         |
 
 `fragmenta-core/src/` 保留 `model/`、`db/`、`settings.rs`、`media.rs`、`export.rs`。运行时 `settings.json` 固定 exe 旁，`fragmenta.db` 与 `imgs/` 位于数据目录。
@@ -301,7 +302,7 @@ impl HotkeyController {
 
 ### 5.10 widgets
 
-`ResizableSplit`（拖分界调宽）、`TagBadge`、`CategoryTag` 等。待办页月历直接消费 kit `base::Calendar`（选日事件驱动清单刷新），无需自研 widget。
+`ResizableSplit`（拖分界调宽）、`toast`（App 级共享浮层：单实体全局 store，主窗口与磁贴窗各自挂载渲染，条目携带触发窗口句柄仅在该窗口可见）、`color_picker`（共享取色盘与矩形色块触发器 `ColorSwatchTrigger`）。toast 以 deferred 图层（priority 150）绘制在弹窗（`10 + layer`）与弹层（100）之上，卡片 `occlude` 遮挡命中：弹窗打开期间提示条可点击关闭、遮罩点击关闭弹窗互不干扰；条目分 notice（短滞留）与 report（含明细、长滞留）两档，级别分 Success / Warn / Error 三档（决定图标与强调色），图标与文字居中展示，出入场为右侧滑入 / 滑出的 ease-in-out 动画（respect 系统减少动态效果设置），至多同屏一条，新条目替换旧条目并重置计时。标签徽片与可选标签矩形仅笔记模块使用，归 `notes/components/`。待办页月历直接消费 kit `base::Calendar`（选日事件驱动清单刷新），无需自研 widget。
 
 ### 5.11 tray
 

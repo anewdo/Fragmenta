@@ -5,13 +5,12 @@ mod filter_panel;
 mod taxonomy_dialog;
 mod view;
 
-use fragmenta_core::model::{Note, NoteFilter, NoteSort};
+use fragmenta_core::model::{Note, NoteFilter, NoteSort, TaxonomyEntry};
 
 use gpui_kit::component::ResizableState;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::ButtonVariant;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -23,16 +22,10 @@ use crate::notes::{NoteKey, NotesEvent, NotesState};
 use crate::taxonomy::{TaxonomyEvent, TaxonomyStore};
 use crate::ui::dialog_motion;
 use crate::utils::palette::parse_hex_color;
+use crate::widgets::toast;
 
 use filter_panel::FilterPanel;
 use taxonomy_dialog::TaxonomyModal;
-
-/// 名字 → `#RRGGBB` 映射转为名字 → Hsla 展示色映射（非法色值按未选色处理）。
-fn parse_color_map(map: HashMap<String, Option<String>>) -> HashMap<String, Option<Hsla>> {
-    map.into_iter()
-        .map(|(name, color)| (name, color.as_deref().and_then(parse_hex_color)))
-        .collect()
-}
 
 /// 笔记页视图：筛选栏 + 卡片列表，常驻于主窗口 shell。
 pub(crate) struct NotesPage {
@@ -52,9 +45,10 @@ pub(crate) struct NotesPage {
     /// 列表快照：查询失败时存错误信息（错误占位 + 重试）。
     list: Result<Vec<Note>, String>,
     /// 名字 → 展示颜色快照（DB 持久颜色，未选色为 None）：卡片徽片与
-    /// 分类标签弹窗按名取色（ADR-0008）。
-    category_colors: HashMap<String, Option<Hsla>>,
+    /// 标签编辑弹窗按名取色（ADR-0008）。
     tag_colors: HashMap<String, Option<Hsla>>,
+    /// 全部标签条目快照（名称排序）：标签编辑弹窗的可选项来源。
+    all_tags: Vec<TaxonomyEntry>,
     /// 鼠标当前悬停的卡片（None = 无）；用于操作按钮淡入。
     hovered_note: Option<i64>,
     /// 悬停序号：每进入一张卡片递增，驱动淡入动画重启。
@@ -112,8 +106,8 @@ impl NotesPage {
             filter_open: false,
             filter_panel,
             list: Ok(Vec::new()),
-            category_colors: HashMap::new(),
             tag_colors: HashMap::new(),
+            all_tags: Vec::new(),
             hovered_note: None,
             hover_seq: 0,
             taxonomy_modal: None,
@@ -145,8 +139,16 @@ impl NotesPage {
         let taxonomy = taxonomy.read(cx);
         let categories = taxonomy.categories().unwrap_or_default();
         let tags = taxonomy.tags().unwrap_or_default();
-        self.category_colors = parse_color_map(store.category_colors().unwrap_or_default());
-        self.tag_colors = parse_color_map(store.tag_colors().unwrap_or_default());
+        self.tag_colors = tags
+            .iter()
+            .map(|entry| {
+                (
+                    entry.name.clone(),
+                    entry.color.as_deref().and_then(parse_hex_color),
+                )
+            })
+            .collect();
+        self.all_tags = tags.clone();
         self.filter_panel.update(cx, |panel, cx| {
             panel.sync_options(categories, tags, note_count);
             cx.notify();
@@ -252,7 +254,7 @@ impl NotesPage {
             Err(err) => {
                 // 插入失败时不会有 `Changed`：清空后的条件仍需立即生效
                 self.refresh(cx);
-                window.push_notification(Notification::error(err.to_string()), cx);
+                toast::error(err.to_string(), window, cx);
             }
         }
     }
@@ -272,7 +274,7 @@ impl NotesPage {
                 .on_ok(move |_, window, cx| {
                     weak.update(cx, |this, cx| {
                         if let Err(err) = this.notes.update(cx, |s, cx| s.delete(id, cx)) {
-                            window.push_notification(Notification::error(err.to_string()), cx);
+                            toast::error(err.to_string(), window, cx);
                             return false;
                         }
                         // 删除协调（§5.6）：正打开的笔记被删 → 同步清空编辑器

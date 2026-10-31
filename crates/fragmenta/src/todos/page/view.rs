@@ -18,7 +18,6 @@ use gpui_kit::component::empty::{
     Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyMediaVariant, EmptyTitle,
 };
 use gpui_kit::component::input::Input;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::time_field::TimeField;
 use gpui_kit::component::{
@@ -33,6 +32,7 @@ use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::note_list;
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
 use crate::utils::time;
+use crate::widgets::toast;
 
 /// 日历单元格边长：kit 默认 32 放大到 40（对齐 kit Large 档几何），
 /// 为右上角圆点留出空间。
@@ -334,7 +334,7 @@ impl TodosPage {
                     let _ = weak.update(cx, |page, cx| {
                         let result = page.todos.update(cx, |state, cx| state.toggle(&todo, cx));
                         if let Err(err) = result {
-                            window.push_notification(Notification::error(err.to_string()), cx);
+                            toast::error(err.to_string(), window, cx);
                         }
                     });
                 }

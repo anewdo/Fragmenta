@@ -15,7 +15,6 @@ use fragmenta_core::model::Todo;
 use gpui_kit::base::{CalendarEvent, CalendarState, Date};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::time_field::TimeFieldState;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -25,6 +24,7 @@ use crate::settings::SettingsStore;
 use crate::todos::TodosStore;
 use crate::todos::{TodosEvent, TodosState};
 use crate::ui::dialog_motion;
+use crate::widgets::toast;
 
 /// 日历圆点状态：当天仍有未完成待办，或当天待办已全部完成。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -303,7 +303,7 @@ fn submit_form(
     }
     let interval = if has_interval {
         if end <= start {
-            window.push_notification(Notification::error("结束时间需晚于开始时间"), cx);
+            toast::warn("结束时间需晚于开始时间", window, cx);
             return;
         }
         Some((start, end))
@@ -323,7 +323,7 @@ fn submit_form(
     });
     match result {
         Ok(Ok(())) => window.close_dialog(cx),
-        Ok(Err(err)) => window.push_notification(Notification::error(err.to_string()), cx),
+        Ok(Err(err)) => toast::error(err.to_string(), window, cx),
         // 页面实体已释放（窗口关闭）：无处呈现，放弃
         Err(_) => {}
     }

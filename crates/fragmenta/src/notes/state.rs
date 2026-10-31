@@ -205,17 +205,6 @@ impl NotesState {
         self.db.note_count()
     }
 
-    /// read-through：分类名 → 颜色（`#RRGGBB`，未选色为 None），
-    /// 供卡片徽片与分类标签表单按名取色。
-    pub fn category_colors(&self) -> DbResult<HashMap<String, Option<String>>> {
-        self.db.category_colors()
-    }
-
-    /// read-through：标签名 → 颜色（`#RRGGBB`，未选色为 None）。
-    pub fn tag_colors(&self) -> DbResult<HashMap<String, Option<String>>> {
-        self.db.tag_colors()
-    }
-
     /// 取出该槽并落库，返回结果；失败保留槽位内容（无计时器）供后续 save / flush_now 重试。
     fn flush(&mut self, key: &NoteKey, cx: &mut Context<Self>) -> Option<SaveStatus> {
         let write = self.pending.remove(key)?;

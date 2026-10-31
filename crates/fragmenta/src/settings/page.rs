@@ -19,7 +19,7 @@ use crate::ui::layout::{
 };
 use crate::ui::theme;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
-use crate::widgets::toast::{Toast, ToastStore};
+use crate::widgets::toast::{Toast, ToastKind, ToastStore};
 
 /// 热键录入框宽度与主题色卡尺寸：设置页局部控件特例。
 const HOTKEY_RECORDER_WIDTH: Pixels = px(240.);
@@ -395,7 +395,7 @@ impl SettingsPage {
                                 let Some(out_dir) = crate::win32::pick_folder(owner) else {
                                     return;
                                 };
-                                run_export(out_dir, cx);
+                                run_export(out_dir, window, cx);
                             })),
                     ),
             ))
@@ -469,7 +469,9 @@ impl SettingsPage {
 
 /// 执行导出（ticket 07）：待写草稿先落库并直查全量笔记，导出在后台线程
 /// 进行（应用可用不阻塞），完成后以 toast 报告（笔记数 / 资产数 / 失败项）。
-fn run_export(out_dir: PathBuf, cx: &mut Context<SettingsPage>) {
+fn run_export(out_dir: PathBuf, window: &mut Window, cx: &mut Context<SettingsPage>) {
+    // toast 只在触发窗口渲染：先取本窗口句柄供后台完成后回填
+    let window = window.window_handle();
     let notes_store = cx.global::<NotesStore>().0.clone();
     // 导出内容与界面一致：先落库全部待写草稿（失败槽保留重试，不影响导出）
     let _ = notes_store.update(cx, |state, cx| state.flush_all(cx));
@@ -485,7 +487,7 @@ fn run_export(out_dir: PathBuf, cx: &mut Context<SettingsPage>) {
             cx.spawn(async move |_, cx| {
                 let report = export.await;
                 let _ = toast.update(cx, |state, cx| {
-                    state.show(export_result_toast(report), cx);
+                    state.show(export_result_toast(report), window, cx);
                 });
             })
             .detach();
@@ -493,11 +495,12 @@ fn run_export(out_dir: PathBuf, cx: &mut Context<SettingsPage>) {
         Err(err) => {
             toast.update(cx, |state, cx| {
                 state.show(
-                    Toast {
-                        title: "导出失败".to_string(),
-                        detail: Some(format!("读取笔记列表失败：{err}")),
-                        failure: true,
-                    },
+                    Toast::report(
+                        "导出失败",
+                        Some(format!("读取笔记列表失败：{err}")),
+                        ToastKind::Error,
+                    ),
+                    window,
                     cx,
                 );
             });
@@ -538,18 +541,22 @@ fn export_result_toast(result: fragmenta_core::export::Result<ExportReport>) -> 
                 }
                 lines.join("\n")
             });
-            Toast {
+            Toast::report(
                 title,
                 detail,
-                failure: failures > 0,
-            }
+                if failures > 0 {
+                    ToastKind::Warn
+                } else {
+                    ToastKind::Success
+                },
+            )
         }
         // 批次级失败（输出目录不可建立 / 不可写）：尚未写出任何文件，无半成品
-        Err(err) => Toast {
-            title: "导出失败".to_string(),
-            detail: Some(format!("无法写入目标目录：{err}")),
-            failure: true,
-        },
+        Err(err) => Toast::report(
+            "导出失败",
+            Some(format!("无法写入目标目录：{err}")),
+            ToastKind::Error,
+        ),
     }
 }
 

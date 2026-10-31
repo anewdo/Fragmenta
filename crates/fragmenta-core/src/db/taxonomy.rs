@@ -145,6 +145,21 @@ impl Db {
         Ok(())
     }
 
+    /// 确保标签存在：不存在时按给定颜色建立；已存在时保留原名称与原颜色。
+    /// 返回是否新建（`false` 表示标签此前已在库中）。
+    pub fn ensure_tag(&self, name: &str, color: Option<&str>) -> Result<bool> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(DbError::BlankName);
+        }
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO tags (name, color) VALUES (?1, ?2)",
+            params![name, color],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// 删除分类（管理页显式删除，ADR-0008）：相关笔记的归属经外键
     /// `ON DELETE SET NULL` 随本条语句置空，笔记本身完好；条目不存在报错。
     pub fn delete_category(&self, name: &str) -> Result<()> {

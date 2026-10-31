@@ -20,12 +20,13 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::NotesPage;
+use crate::notes::components::TagBadge;
 use crate::settings::SettingsStore;
 use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::note_list;
 use crate::ui::tokens::{self, TextRole};
 use crate::utils::time;
-use crate::widgets::{CategoryTag, ResizableSplit, TagBadge};
+use crate::widgets::ResizableSplit;
 
 /// 卡片摘要最多显示行数（超出以省略号截断）。
 const CARD_SUMMARY_LINES: usize = 2;
@@ -115,8 +116,8 @@ impl NotesPage {
 
     /// 单张笔记卡片（Fluent）：选中指示条 + 材质背景 + 悬停淡入操作。
     ///
-    /// 头部标题（单行截断）与右上分类；中部多行截断摘要；底部左侧平铺
-    /// 标签、右侧相对创建时间。点击卡片任意处 = 选中载入编辑器。
+    /// 头部标题（单行截断）；中部多行截断摘要；底部左侧平铺标签、
+    /// 右侧相对创建时间。点击卡片任意处 = 选中载入编辑器。
     fn note_card(
         &self,
         note: &Note,
@@ -263,28 +264,15 @@ impl NotesPage {
                         .bg(selection),
                 )
             })
-            // 头部：标题（截断）+ 分类（右上角）；悬停操作绝对定位于分类
-            // 之上，不参与布局，避免悬停时卡片高度与标题宽度跳动。
+            // 头部：标题（截断）；悬停操作绝对定位于右侧预留位，
+            // 不参与布局，避免悬停时卡片高度与标题宽度跳动。
             .child(
                 h_flex()
                     .relative()
                     .items_center()
                     .gap_2()
                     .child(note_list::note_title(title, CARD_TITLE_FONT))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .min_w(CARD_ACTIONS_WIDTH)
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .when(hovered, |el| el.invisible())
-                            .when_some(note.category.clone(), |el, cat| {
-                                let color = self.category_colors.get(&cat).copied().flatten();
-                                el.child(CategoryTag::new(cat).color(color))
-                            }),
-                    )
+                    .child(div().flex_shrink_0().min_w(CARD_ACTIONS_WIDTH).h_full())
                     .when(hovered, |el| el.child(actions)),
             )
             // 中部：摘要（多行截断；空正文时省略）

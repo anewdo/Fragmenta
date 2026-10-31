@@ -1,5 +1,6 @@
 //! 笔记功能：共享状态、页面与专用编辑器。
 
+mod components;
 mod editor;
 mod page;
 mod state;

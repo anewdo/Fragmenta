@@ -54,6 +54,21 @@ impl TaxonomyState {
         result
     }
 
+    /// 确保标签存在（不存在时按给定颜色建立，已存在保留原颜色）；返回是否
+    /// 新建，新建后广播 `Changed` 供管理页与筛选选项刷新。
+    pub(crate) fn ensure_tag(
+        &mut self,
+        name: &str,
+        color: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> DbResult<bool> {
+        let inserted = self.db.ensure_tag(name, color)?;
+        if inserted {
+            cx.emit(TaxonomyEvent::Changed);
+        }
+        Ok(inserted)
+    }
+
     /// 重命名实体（挂载与颜色随实体保留）；成功后广播 `Changed`。
     pub(crate) fn rename(
         &mut self,

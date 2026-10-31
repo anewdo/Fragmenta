@@ -7,10 +7,9 @@ use fragmenta_core::model::{Note, NoteFilter, Todo};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, Selectable as _, Sizable as _, Size, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Icon, Selectable as _, Sizable as _, Size, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -26,6 +25,7 @@ use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::note_list;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::utils::time;
+use crate::widgets::toast::{self, ToastState, ToastStore};
 use crate::win32;
 
 use super::CORNER;
@@ -73,6 +73,8 @@ pub(super) struct TileView {
     note_list: Result<Vec<Note>, String>,
     todo_list: Result<Vec<Todo>, String>,
     todo_date: NaiveDate,
+    /// toast 浮层渲染载体：App 级共享实体，仅渲染本窗口触发的条目。
+    toast: Entity<ToastState>,
     midnight_task: Option<Task<()>>,
     topmost: bool,
     status: SaveIndicator,
@@ -95,6 +97,7 @@ impl TileView {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let notes = cx.global::<NotesStore>().0.clone();
         let todos = cx.global::<TodosStore>().0.clone();
+        let toast = cx.global::<ToastStore>().0.clone();
         let source = SourceText::new(
             cx.global::<ImageStore>().0.clone(),
             "写点什么……",
@@ -190,6 +193,7 @@ impl TileView {
             note_list: Ok(Vec::new()),
             todo_list: Ok(Vec::new()),
             todo_date: Local::now().date_naive(),
+            toast,
             midnight_task: None,
             topmost: true, // PopUp 默认携带 WS_EX_TOPMOST（spike ④ 验证）
             status: SaveIndicator::Untouched,
@@ -446,7 +450,7 @@ impl TileView {
             .notes
             .update(cx, |state, cx| state.flush_now(NoteKey::Note(note_id), cx));
         if target_status == Some(SaveStatus::Failed) {
-            window.push_notification(Notification::error("目标笔记保存失败，无法打开"), cx);
+            toast::error("目标笔记保存失败，无法打开", window, cx);
             return;
         }
 
@@ -469,10 +473,10 @@ impl TileView {
                 cx.notify();
             }
             Ok(None) => {
-                window.push_notification(Notification::error("笔记不存在"), cx);
+                toast::error("笔记不存在", window, cx);
             }
             Err(err) => {
-                window.push_notification(Notification::error(err), cx);
+                toast::error(err, window, cx);
             }
         }
     }
@@ -480,7 +484,7 @@ impl TileView {
     fn toggle_todo(&mut self, todo: Todo, window: &mut Window, cx: &mut Context<Self>) {
         let result = self.todos.update(cx, |state, cx| state.toggle(&todo, cx));
         if let Err(err) = result {
-            window.push_notification(Notification::error(err.to_string()), cx);
+            toast::error(err.to_string(), window, cx);
         }
     }
 }
@@ -919,6 +923,8 @@ impl Render for TileView {
             .overflow_hidden()
             .child(topbar)
             .child(content)
+            // toast 浮层：deferred 图层，盖过弹窗与弹层（架构 §5.10）
+            .child(self.toast.clone())
     }
 }
 
@@ -931,6 +937,7 @@ mod tests {
     use crate::settings::SettingsState;
     use crate::settings::SettingsStore;
     use crate::todos::{TodosState, TodosStore};
+    use crate::widgets::toast::{ToastState, ToastStore};
     use chrono::Local;
     use fragmenta_core::{
         db::Db,
@@ -961,6 +968,8 @@ mod tests {
             cx.set_global(NotesStore(notes));
             cx.set_global(TodosStore(todos));
             cx.set_global(SettingsStore(settings));
+            let toast = cx.new(|_| ToastState::new());
+            cx.set_global(ToastStore(toast));
             cx.set_global(ImageStore(Images::new(PathBuf::from(
                 "temp/tile-test-imgs",
             ))));

@@ -147,6 +147,33 @@ fn create_reports_duplicates_and_blank_names() {
     assert_eq!(db.tags_with_usage().unwrap().len(), 1);
 }
 
+/// 确保标签存在：新建时按给定颜色落库；已存在时保留原颜色与挂载。
+#[test]
+fn ensure_tag_creates_with_color_and_keeps_existing() {
+    let dir = TempDir::new("db-taxonomy-ensure-tag");
+    let db_path = dir.path().join("ensure-tag.db");
+    let db = Db::open(&db_path).unwrap();
+
+    assert!(db.ensure_tag(" 急 ", Some("#F44336")).unwrap());
+    let tags = db.tags_with_usage().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "急");
+    assert_eq!(tags[0].color.as_deref(), Some("#F44336"));
+
+    // 已存在：不新建、不改颜色
+    assert!(!db.ensure_tag("急", Some("#2196F3")).unwrap());
+    let tags = db.tags_with_usage().unwrap();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].color.as_deref(), Some("#F44336"));
+
+    // 空白名报错且不产生实体
+    assert!(matches!(
+        db.ensure_tag("   ", None).unwrap_err(),
+        DbError::BlankName
+    ));
+    assert_eq!(db.tags_with_usage().unwrap().len(), 1);
+}
+
 /// 重命名标签：挂载与颜色随实体保留；源不存在 / 目标重名报错。
 #[test]
 fn rename_tag_moves_mounts_and_keeps_color() {
@@ -355,7 +382,8 @@ fn set_color_and_clear_persist_across_reopen() {
 
     // 条目不存在报错（设色与置空同路径）
     assert!(matches!(
-        db.set_category_color("不存在", Some("#2196F3")).unwrap_err(),
+        db.set_category_color("不存在", Some("#2196F3"))
+            .unwrap_err(),
         DbError::CategoryNotFound(_)
     ));
     assert!(matches!(
