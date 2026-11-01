@@ -79,16 +79,28 @@ fn legend_item(label: &'static str, color: Hsla, muted: Hsla) -> AnyElement {
         .into_any_element()
 }
 
-/// Dialog 表单内容：内容输入 + 「指定时间区间」勾选 + 起止时间（勾选时显示）。
-///
-/// 每帧经 builder 重建：读取表单实体即建立观察，勾选状态变化立即
-/// 反映到 TimeField 行的显隐。
+/// Dialog 表单内容：共享字段构建（见 [`form_fields`]）包一层 DialogContent。
 pub(super) fn form_content(
     form: &Entity<TodoForm>,
     content: DialogContent,
     window: &mut Window,
     cx: &mut App,
 ) -> DialogContent {
+    content.child(form_fields(form, None, window, cx))
+}
+
+/// 表单字段构建：内容输入（可带行尾元素，如磁贴的「添加」按钮）+
+/// 「指定时间区间」勾选 + 起止时间（勾选时显示）。磁贴内联表单与
+/// 主窗口 Dialog 共用。
+///
+/// 每帧经调用方重建：读取表单实体即建立观察，勾选状态变化立即
+/// 反映到 TimeField 行的显隐与行尾元素的禁用态。
+pub(crate) fn form_fields(
+    form: &Entity<TodoForm>,
+    input_trailing: Option<AnyElement>,
+    window: &mut Window,
+    cx: &App,
+) -> Div {
     let (has_interval, input, start, end) = {
         let form = form.read(cx);
         (
@@ -106,62 +118,65 @@ pub(super) fn form_content(
             input_border(theme, end.read(cx).focus_handle(cx).is_focused(window)),
         )
     };
-    content.child(
-        v_flex()
-            .gap_2()
-            .child(
-                Input::new(&input)
-                    .id("todo-form-content")
-                    .w_full()
-                    .text_field_focus(content_border),
-            )
-            .child({
-                let form = form.clone();
-                // 勾选框聚焦时 Enter 只切换勾选：kit Dialog 的 Enter→Confirm
-                // 会在按键按下时吞掉原生激活键，故在此就近截获并自行翻转。
-                div()
-                    .id("todo-form-interval-hotkey")
-                    .on_action({
-                        let form = form.clone();
-                        move |_: &Confirm, _, cx| {
-                            form.update(cx, |form, cx| {
-                                form.has_interval = !form.has_interval;
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .child(
-                        Checkbox::new("todo-form-interval")
-                            .label("指定时间区间")
-                            .checked(has_interval)
-                            .on_change({
-                                let form = form.clone();
-                                move |value, _, cx| {
-                                    // notify 触发对话框层重建：勾选视觉、TimeField 行显隐
-                                    // 都由每帧重建的 builder 从表单实体重新读取
-                                    form.update(cx, |form, cx| {
-                                        form.has_interval = *value;
-                                        cx.notify();
-                                    });
-                                }
-                            }),
-                    )
-            })
-            .when(has_interval, |el| {
-                el.child(
-                    h_flex()
-                        .id("todo-form-interval-row")
-                        .test_support()
-                        .gap_2()
-                        .child(
-                            TimeField::new(&start)
-                                .flex_1()
-                                .text_field_focus(start_border),
-                        )
-                        .child(TimeField::new(&end).flex_1().text_field_focus(end_border)),
+    v_flex()
+        .gap_2()
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Input::new(&input)
+                        .id("todo-form-content")
+                        .flex_1()
+                        .text_field_focus(content_border),
                 )
-            }),
-    )
+                .when_some(input_trailing, |el, trailing| el.child(trailing)),
+        )
+        .child({
+            let form = form.clone();
+            // 勾选框聚焦时 Enter 只切换勾选：kit Dialog 的 Enter→Confirm
+            // 会在按键按下时吞掉原生激活键，故在此就近截获并自行翻转。
+            div()
+                .id("todo-form-interval-hotkey")
+                .on_action({
+                    let form = form.clone();
+                    move |_: &Confirm, _, cx| {
+                        form.update(cx, |form, cx| {
+                            form.has_interval = !form.has_interval;
+                            cx.notify();
+                        });
+                    }
+                })
+                .child(
+                    Checkbox::new("todo-form-interval")
+                        .label("指定时间区间")
+                        .checked(has_interval)
+                        .on_change({
+                            let form = form.clone();
+                            move |value, _, cx| {
+                                // notify 触发对话框层重建：勾选视觉、TimeField 行显隐
+                                // 都由每帧重建的 builder 从表单实体重新读取
+                                form.update(cx, |form, cx| {
+                                    form.has_interval = *value;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                )
+        })
+        .when(has_interval, |el| {
+            el.child(
+                h_flex()
+                    .id("todo-form-interval-row")
+                    .test_support()
+                    .gap_2()
+                    .child(
+                        TimeField::new(&start)
+                            .flex_1()
+                            .text_field_focus(start_border),
+                    )
+                    .child(TimeField::new(&end).flex_1().text_field_focus(end_border)),
+            )
+        })
 }
 
 /// Dialog 自定义 footer：「取消」+「保存」。
@@ -174,7 +189,7 @@ pub(super) fn form_footer(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let content_empty = form.read(cx).content.read(cx).value().trim().is_empty();
+    let content_empty = form.read(cx).content_empty(cx);
     h_flex()
         .justify_end()
         .gap_2()

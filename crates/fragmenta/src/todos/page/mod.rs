@@ -6,6 +6,8 @@
 
 mod view;
 
+pub(crate) use view::form_fields;
+
 use std::collections::HashMap;
 
 use chrono::{Days, Local, NaiveDate, NaiveTime};
@@ -58,6 +60,99 @@ fn default_interval() -> (NaiveTime, NaiveTime) {
         NaiveTime::from_hms_opt(9, 0, 0).expect("09:00 合法"),
         NaiveTime::from_hms_opt(10, 0, 0).expect("10:00 合法"),
     )
+}
+
+/// 表单校验后的待办草稿：内容 + 归属日期 + 可选区间。
+pub(crate) struct TodoDraft {
+    pub(crate) content: String,
+    pub(crate) date: NaiveDate,
+    pub(crate) interval: Option<(NaiveTime, NaiveTime)>,
+}
+
+/// 表单校验错误：内容为空 / 区间不合法（end ≤ start）。
+pub(crate) enum TodoFormError {
+    Empty,
+    InvalidInterval,
+}
+
+impl TodoForm {
+    /// 以指定归属日期构建空白新建表单（磁贴内联表单用；主窗口弹窗表单
+    /// 每次 `open_form` 重建，不经此入口）。
+    pub(crate) fn create(date: NaiveDate, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let content = cx.new(|cx| InputState::new(window, cx).placeholder("待办内容"));
+        let (start_init, end_init) = default_interval();
+        let start = cx.new(|cx| {
+            let mut state = TimeFieldState::new(window, cx);
+            state.set_time(start_init, window, cx);
+            state
+        });
+        let end = cx.new(|cx| {
+            let mut state = TimeFieldState::new(window, cx);
+            state.set_time(end_init, window, cx);
+            state
+        });
+        cx.new(|_| Self {
+            editing: None,
+            content,
+            has_interval: false,
+            start,
+            end,
+            date,
+        })
+    }
+
+    /// 校验并收取表单内容为待办草稿：内容必填；勾选区间时 `end <= start`
+    /// 拒绝（不支持跨天，跨天需求拆为两条待办）。
+    pub(crate) fn draft(&self, cx: &App) -> Result<TodoDraft, TodoFormError> {
+        let content = self.content.read(cx).value().trim().to_string();
+        if content.is_empty() {
+            return Err(TodoFormError::Empty);
+        }
+        let interval = if self.has_interval {
+            let (start, end) = (self.start.read(cx).time(), self.end.read(cx).time());
+            if end <= start {
+                return Err(TodoFormError::InvalidInterval);
+            }
+            Some((start, end))
+        } else {
+            None
+        };
+        Ok(TodoDraft {
+            content,
+            date: self.date,
+            interval,
+        })
+    }
+
+    /// 内容输入框焦点句柄（磁贴切入 Todos 模式时聚焦用）。
+    pub(crate) fn content_focus(&self, cx: &App) -> FocusHandle {
+        self.content.read(cx).focus_handle(cx)
+    }
+
+    /// 内容是否为空（「保存」/「添加」按钮动态禁用用）。
+    pub(crate) fn content_empty(&self, cx: &App) -> bool {
+        self.content.read(cx).value().trim().is_empty()
+    }
+
+    /// 写入内容输入（与用户键入等价的程序化入口，headless 测试驱动用）。
+    #[cfg(test)]
+    pub(crate) fn set_content(&mut self, value: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.content
+            .update(cx, |state, cx| state.set_value(value, window, cx));
+    }
+
+    /// 同步归属日期（磁贴跨零点刷新后对齐"今天"）。
+    pub(crate) fn set_date(&mut self, date: NaiveDate) {
+        self.date = date;
+    }
+
+    /// 提交成功后复位：清空内容、取消区间勾选（磁贴连续录入下一条）。
+    pub(crate) fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.content
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.has_interval = false;
+        cx.notify();
+    }
 }
 
 /// 待办页视图：日历 + 选中日清单，常驻于主窗口 shell。
@@ -277,8 +372,8 @@ impl TodosPage {
     }
 }
 
-/// 表单提交：内容必填（「保存」已禁用，双保险）；勾选区间时 `end <= start`
-/// 拒绝（不支持跨天，跨天需求拆为两条待办）。
+/// 表单提交：校验经 [`TodoForm::draft`]（内容必填由「保存」禁用兜底，
+/// 区间不合法 toast 提示并保留表单）。
 ///
 /// 成功后关闭对话框（`Changed` 驱动清单刷新）；失败以通知呈现并保留表单。
 fn submit_form(
@@ -287,36 +382,28 @@ fn submit_form(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let (content, has_interval, start, end, editing, date) = {
+    let (editing, draft) = {
         let form = form.read(cx);
-        (
-            form.content.read(cx).value().trim().to_string(),
-            form.has_interval,
-            form.start.read(cx).time(),
-            form.end.read(cx).time(),
-            form.editing.clone(),
-            form.date,
-        )
+        let draft = form.draft(cx);
+        (form.editing.clone(), draft)
     };
-    if content.is_empty() {
-        return;
-    }
-    let interval = if has_interval {
-        if end <= start {
+    let draft = match draft {
+        Ok(draft) => draft,
+        Err(TodoFormError::InvalidInterval) => {
             toast::warn("结束时间需晚于开始时间", window, cx);
             return;
         }
-        Some((start, end))
-    } else {
-        None
+        Err(TodoFormError::Empty) => return,
     };
 
     let result = weak.update(cx, |page, cx| {
         page.todos.update(cx, |state, cx| match editing {
-            None => state.add(&content, date, interval, cx).map(|_| ()),
+            None => state
+                .add(&draft.content, draft.date, draft.interval, cx)
+                .map(|_| ()),
             Some(mut todo) => {
-                todo.content = content.clone();
-                todo.interval = interval;
+                todo.content = draft.content.clone();
+                todo.interval = draft.interval;
                 state.update(&mut todo, cx)
             }
         })
