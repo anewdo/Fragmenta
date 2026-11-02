@@ -36,20 +36,52 @@ jobs:
           Get-Content SHA256SUMS.txt
           Get-ChildItem $asset, SHA256SUMS.txt, LICENSE | Format-Table Name, Length
 
+      - name: Compose release notes
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $asset = "Fragmenta_${tag}_x64.exe"
+          $repo = $env:GITHUB_REPOSITORY
+
+          $notesPath = Join-Path 'docs/release-notes' "$tag.md"
+          $body = ''
+          if (Test-Path $notesPath) {
+            $raw = Get-Content $notesPath -Raw -Encoding utf8
+            $body = [regex]::Replace($raw, '(?s)<!--.*?-->', '').Trim()
+            $content = [regex]::Replace($body, '(?m)^#{1,6}\s.*$', '').Trim()
+            if ([string]::IsNullOrWhiteSpace($content)) { $body = '' }
+          }
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            Write-Warning "未找到 $notesPath 的有效内容，Release 正文使用占位说明，发布后可手动补充。"
+            $body = '> 本版发布说明尚未填写，可在 GitHub Release 页面编辑补充。'
+          }
+
+          $footer = @(
+            '---',
+            '',
+            '## 安装与升级',
+            '',
+            ('- 下载 `{0}`，放到任意可写目录后直接运行，无需安装。' -f $asset),
+            '- 升级时先退出应用，再用新 exe 覆盖旧 exe，保留 `settings.json` 与 `data/`。',
+            '- 首次运行如遇 SmartScreen 提示，点击「更多信息」→「仍要运行」。',
+            '',
+            '## 完整性校验',
+            '',
+            ('下载后在命令行运行 `certutil -hashfile {0} SHA256`，输出应与 `SHA256SUMS.txt` 一致。' -f $asset),
+            '',
+            ('完整更新记录见 [docs/release-notes](https://github.com/{0}/tree/main/docs/release-notes)。' -f $repo)
+          ) -join "`n"
+
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          Set-Content -Path $notesFile -Value ($body + "`n`n" + $footer) -Encoding utf8
+          Get-Content $notesFile
+
       - name: Create release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "$env:GITHUB_REF_NAME"
+          $tag = $env:GITHUB_REF_NAME
           $asset = "Fragmenta_${tag}_x64.exe"
-          $notes = @"
-          ## 完整性校验
-
-          下载后在命令行运行 certutil -hashfile $asset SHA256，输出与 SHA256SUMS.txt 中的值比对，一致即文件完整。
-
-          ## SmartScreen 说明
-
-          本 exe 未经代码签名，首次运行可能被 Windows SmartScreen 拦截（「Windows 已保护你的电脑」）：点击「更多信息」→「仍要运行」后即可正常启动。
-          "@
-          gh release create $tag $asset SHA256SUMS.txt LICENSE --title $tag --generate-notes --notes $notes
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          gh release create $tag $asset SHA256SUMS.txt LICENSE --title "Fragmenta $tag" --notes-file $notesFile
