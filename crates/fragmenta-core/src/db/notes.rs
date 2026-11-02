@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use chrono::Local;
-use rusqlite::{params, params_from_iter, Connection};
+use rusqlite::{Connection, params, params_from_iter};
 
-use super::{parse_timestamp, Db, DbError, Result};
+use super::{Db, DbError, Result, parse_timestamp};
 use crate::model::{Note, NoteFilter, NoteSort};
 
 impl Db {
@@ -58,9 +58,8 @@ impl Db {
 
 /// 主查询 + 标签批量补齐。
 fn query_notes(conn: &Connection, filter: &NoteFilter) -> Result<Vec<Note>> {
-    let mut sql = String::from(
-        "SELECT n.id, n.title, n.content, n.created_at, n.updated_at FROM notes n",
-    );
+    let mut sql =
+        String::from("SELECT n.id, n.title, n.content, n.created_at, n.updated_at FROM notes n");
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<String> = Vec::new();
 

@@ -3,6 +3,6 @@
 mod page;
 mod state;
 
-pub(crate) use page::{form_fields, TodoForm, TodoFormError, TodosPage};
+pub(crate) use page::{TodoForm, TodoFormError, TodosPage, form_fields};
 pub(crate) use state::TodosStore;
 pub use state::{TodosEvent, TodosState};

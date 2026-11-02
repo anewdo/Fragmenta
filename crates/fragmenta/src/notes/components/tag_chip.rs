@@ -16,6 +16,9 @@ use crate::utils::palette::filled_foreground;
 /// 选中对勾淡入时长。
 const CHECK_FADE: Duration = Duration::from_millis(120);
 
+/// 标签矩形的点击回调。
+type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 /// 标签矩形：`id` 同时用于命中测试与对勾动画的稳定标识。
 #[derive(IntoElement)]
 pub(crate) struct TagChip {
@@ -24,7 +27,7 @@ pub(crate) struct TagChip {
     label: SharedString,
     color: Option<Hsla>,
     selected: bool,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    on_click: Option<ClickHandler>,
 }
 
 impl TagChip {

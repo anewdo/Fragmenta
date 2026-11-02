@@ -16,8 +16,8 @@ use fragmenta_core::{
     settings::Settings,
 };
 use gpui_kit::{
-    AnyWindowHandle, AppContext as _, Entity, Focusable as _, TestAppContext,
-    VisualTestContext, WindowOptions,
+    AnyWindowHandle, AppContext as _, Entity, Focusable as _, TestAppContext, VisualTestContext,
+    WindowOptions,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -282,21 +282,11 @@ fn todo_form_collapsible_keeps_state_across_mode_switches(cx: &mut TestAppContex
             tile.toggle_mode(TileMode::Todos, window, cx);
             assert_eq!(tile.mode, TileMode::Todos);
             assert!(!tile.todo_form_open);
-            assert!(
-                !tile.todo_form
-                    .read(cx)
-                    .content_focus(cx)
-                    .is_focused(window)
-            );
+            assert!(!tile.todo_form.read(cx).content_focus(cx).is_focused(window));
             // 展开：焦点落内容输入框，输入后照常提交
             tile.toggle_todo_form(window, cx);
             assert!(tile.todo_form_open);
-            assert!(
-                tile.todo_form
-                    .read(cx)
-                    .content_focus(cx)
-                    .is_focused(window)
-            );
+            assert!(tile.todo_form.read(cx).content_focus(cx).is_focused(window));
             tile.todo_form.update(cx, |form, cx| {
                 form.set_content("收起再展开后的待办", window, cx);
                 cx.notify();
@@ -308,7 +298,11 @@ fn todo_form_collapsible_keeps_state_across_mode_switches(cx: &mut TestAppContex
     cx.executor().run_until_parked();
     let todos = db.todos_between(today, today).unwrap();
     assert_eq!(todos.len(), 2);
-    assert!(todos.iter().any(|todo| todo.content == "收起再展开后的待办"));
+    assert!(
+        todos
+            .iter()
+            .any(|todo| todo.content == "收起再展开后的待办")
+    );
 }
 
 #[gpui_kit::test]
@@ -319,12 +313,7 @@ fn todo_form_focuses_adds_resets_and_delete_removes(cx: &mut TestAppContext) {
         tile.update(cx, |tile, cx| {
             tile.toggle_mode(TileMode::Todos, window, cx);
             // 切入 Todos 模式：焦点落新增表单的内容输入框
-            assert!(
-                tile.todo_form
-                    .read(cx)
-                    .content_focus(cx)
-                    .is_focused(window)
-            );
+            assert!(tile.todo_form.read(cx).content_focus(cx).is_focused(window));
             // 空内容提交不落库（按钮禁用的双保险路径）
             tile.submit_todo(window, cx);
         });

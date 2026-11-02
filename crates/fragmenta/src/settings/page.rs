@@ -486,7 +486,7 @@ fn run_export(out_dir: PathBuf, window: &mut Window, cx: &mut Context<SettingsPa
             });
             cx.spawn(async move |_, cx| {
                 let report = export.await;
-                let _ = toast.update(cx, |state, cx| {
+                toast.update(cx, |state, cx| {
                     state.show(export_result_toast(report), window, cx);
                 });
             })
@@ -757,6 +757,14 @@ fn theme_mock(theme: ThemeMode, cx: &App) -> MockColors {
     }
 }
 
+/// 主题色块共用的三个主题色：选中描边、未选中描边与标签文字。
+#[derive(Clone, Copy)]
+struct SwatchColors {
+    primary: Hsla,
+    border: Hsla,
+    muted: Hsla,
+}
+
 /// 主题节：说明文字 + 矩形颜色按钮行（选中即整套配色生效，枚举单选）。
 fn theme_section(
     theme: ThemeMode,
@@ -765,6 +773,11 @@ fn theme_section(
     border: Hsla,
     cx: &App,
 ) -> impl IntoElement {
+    let colors = SwatchColors {
+        primary,
+        border,
+        muted,
+    };
     v_flex()
         .w_full()
         .gap(tokens::spacing::SM)
@@ -801,9 +814,7 @@ fn theme_section(
                                 .flex_1()
                                 .min_w_0(),
                         ),
-                    primary,
-                    border,
-                    muted,
+                    colors,
                 ))
                 .child(theme_swatch(
                     "theme-pick-light",
@@ -811,9 +822,7 @@ fn theme_section(
                     theme == ThemeMode::Light,
                     ThemeMode::Light,
                     mock_preview(theme_mock(ThemeMode::Light, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
+                    colors,
                 ))
                 .child(theme_swatch(
                     "theme-pick-dark",
@@ -821,9 +830,7 @@ fn theme_section(
                     theme == ThemeMode::Dark,
                     ThemeMode::Dark,
                     mock_preview(theme_mock(ThemeMode::Dark, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
+                    colors,
                 ))
                 .child(theme_swatch(
                     "theme-pick-literary-green",
@@ -831,9 +838,7 @@ fn theme_section(
                     theme == ThemeMode::LiteraryGreen,
                     ThemeMode::LiteraryGreen,
                     mock_preview(theme_mock(ThemeMode::LiteraryGreen, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
+                    colors,
                 ))
                 .child(theme_swatch(
                     "theme-pick-ceramic",
@@ -841,9 +846,7 @@ fn theme_section(
                     theme == ThemeMode::Ceramic,
                     ThemeMode::Ceramic,
                     mock_preview(theme_mock(ThemeMode::Ceramic, cx), px(18.), px(12.)),
-                    primary,
-                    border,
-                    muted,
+                    colors,
                 )),
         )
 }
@@ -855,10 +858,13 @@ fn theme_swatch(
     selected: bool,
     mode: ThemeMode,
     preview: impl IntoElement,
-    primary: Hsla,
-    border: Hsla,
-    muted: Hsla,
+    colors: SwatchColors,
 ) -> impl IntoElement {
+    let SwatchColors {
+        primary,
+        border,
+        muted,
+    } = colors;
     v_flex()
         .gap(tokens::spacing::XS)
         .child(

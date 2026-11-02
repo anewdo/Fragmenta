@@ -37,6 +37,9 @@ const MODAL_RADIUS: Pixels = px(12.);
 /// 标签列表最大高度：超出后滚动，避免弹窗随标签数量无限增高。
 const TAG_LIST_MAX_HEIGHT: Pixels = px(168.);
 
+/// 弹窗关闭动作：遮罩 / 关闭按钮 / 取消与保存按钮共用的回调形态。
+type CloseAction = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// 弹窗阶段：关闭动画期间仍保持挂载，计时结束才真正移除。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ModalPhase {
@@ -217,13 +220,13 @@ impl NotesPage {
         let new_tag_color = modal.new_tag_color;
         let selected_tags = &modal.selected;
 
-        let close_cancel: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new({
+        let close_cancel: CloseAction = Rc::new({
             let weak = weak.clone();
             move |window, cx| {
                 let _ = weak.update(cx, |page, cx| page.begin_close_taxonomy(false, window, cx));
             }
         });
-        let close_save: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new({
+        let close_save: CloseAction = Rc::new({
             let weak = weak.clone();
             move |window, cx| {
                 let _ = weak.update(cx, |page, cx| page.begin_close_taxonomy(true, window, cx));

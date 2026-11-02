@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          $asset = "Fragmenta_${tag}_x64.exe"
+          Copy-Item target/release/fragmenta.exe $asset
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash
+          "$hash  $asset" | Set-Content -Encoding utf8 SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+          Get-ChildItem $asset, SHA256SUMS.txt, LICENSE | Format-Table Name, Length
+
+      - name: Create release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "$env:GITHUB_REF_NAME"
+          $asset = "Fragmenta_${tag}_x64.exe"
+          $notes = @"
+          ## 完整性校验
+
+          下载后在命令行运行 certutil -hashfile $asset SHA256，输出与 SHA256SUMS.txt 中的值比对，一致即文件完整。
+
+          ## SmartScreen 说明
+
+          本 exe 未经代码签名，首次运行可能被 Windows SmartScreen 拦截（「Windows 已保护你的电脑」）：点击「更多信息」→「仍要运行」后即可正常启动。
+          "@
+          gh release create $tag $asset SHA256SUMS.txt LICENSE --title $tag --generate-notes --notes $notes

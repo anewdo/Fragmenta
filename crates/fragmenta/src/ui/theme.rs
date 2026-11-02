@@ -105,6 +105,24 @@ pub(crate) fn apply(theme: ThemeMode, system: KitThemeMode, cx: &mut App) {
     cx.set_global(AppliedTheme(theme));
 }
 
+/// 开发构建监听源码目录；发布构建只使用内嵌主题。
+#[cfg(debug_assertions)]
+pub(crate) fn watch(cx: &mut App) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
+    cx.observe_global::<ThemeRegistry>(|cx| {
+        // 等待 kit 完成注册表更新，再按当前选择重放（Auto 沿用已解析的深浅模式）。
+        cx.defer(|cx| {
+            let choice = cx.global::<AppliedTheme>().0;
+            let system = Theme::global(cx).mode;
+            apply(choice, system, cx);
+        });
+    })
+    .detach();
+    if let Err(err) = ThemeRegistry::watch_dir(dir, cx, |_| {}) {
+        eprintln!("[fragmenta] 主题热重载启动失败: {err}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,23 +178,5 @@ mod tests {
                 assert_eq!(preview.colors, theme.colors);
             });
         }
-    }
-}
-
-/// 开发构建监听源码目录；发布构建只使用内嵌主题。
-#[cfg(debug_assertions)]
-pub(crate) fn watch(cx: &mut App) {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
-    cx.observe_global::<ThemeRegistry>(|cx| {
-        // 等待 kit 完成注册表更新，再按当前选择重放（Auto 沿用已解析的深浅模式）。
-        cx.defer(|cx| {
-            let choice = cx.global::<AppliedTheme>().0;
-            let system = Theme::global(cx).mode;
-            apply(choice, system, cx);
-        });
-    })
-    .detach();
-    if let Err(err) = ThemeRegistry::watch_dir(dir, cx, |_| {}) {
-        eprintln!("[fragmenta] 主题热重载启动失败: {err}");
     }
 }

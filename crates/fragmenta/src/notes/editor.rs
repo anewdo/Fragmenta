@@ -308,7 +308,8 @@ impl Render for NoteEditor {
                                     )
                                     .title(EmptyTitle::new().child("未选择笔记"))
                                     .description(
-                                        EmptyDescription::new().child("点击左侧卡片，在此阅读与编辑笔记"),
+                                        EmptyDescription::new()
+                                            .child("点击左侧卡片，在此阅读与编辑笔记"),
                                     ),
                             ),
                         ),

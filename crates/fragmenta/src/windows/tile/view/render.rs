@@ -9,8 +9,7 @@ use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, Size, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, Size, h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -199,12 +198,7 @@ impl TileView {
             })
     }
 
-    fn todos_content(
-        &self,
-        weak: &WeakEntity<Self>,
-        window: &mut Window,
-        cx: &App,
-    ) -> AnyElement {
+    fn todos_content(&self, weak: &WeakEntity<Self>, window: &mut Window, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let border = theme.border;
         let muted = theme.muted_foreground;
@@ -426,13 +420,15 @@ impl TileView {
                 }
             })
             .child(check)
-            .child(note_list::single_line(todo.content.clone(), content_px).map(|element| {
-                if done {
-                    element.line_through().text_color(muted)
-                } else {
-                    element
-                }
-            }))
+            .child(
+                note_list::single_line(todo.content.clone(), content_px).map(|element| {
+                    if done {
+                        element.line_through().text_color(muted)
+                    } else {
+                        element
+                    }
+                }),
+            )
             .when_some(todo.interval, |element, (start, end)| {
                 element.child(
                     div()

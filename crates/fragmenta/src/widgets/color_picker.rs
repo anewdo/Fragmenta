@@ -34,6 +34,9 @@ const POPOVER_WIDTH: Pixels = px(232.);
 /// 色相滑杆轨道的分段数（离散色块拼出彩虹带）。
 const HUE_STEPS: usize = 12;
 
+/// 选色回调：无色与内置色板选项的选定动作。
+type SelectHandler = Rc<dyn Fn(Option<Hsla>, &mut Window, &mut App)>;
+
 /// 未选色（跟随主题）时打开自定义取色器的起始色：色板蓝（给出可见的拖动起点）。
 pub(crate) fn fallback_picker_color() -> Hsla {
     palette_colors()[4] // Blue 500
@@ -67,7 +70,7 @@ pub(crate) fn color_picker_content<T: 'static>(
     cx: &mut Context<T>,
 ) -> AnyElement {
     let theme = cx.theme().clone();
-    let on_select: Rc<dyn Fn(Option<Hsla>, &mut Window, &mut App)> = Rc::new(on_select);
+    let on_select: SelectHandler = Rc::new(on_select);
 
     // 无色 / 跟随主题：恢复主题中性样式
     let none_selected = current.is_none();

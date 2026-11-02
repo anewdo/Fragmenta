@@ -206,9 +206,8 @@ impl Render for FilterPanel {
                                         return;
                                     };
                                     let tags = panel.read(cx).draft_tags.clone();
-                                    let _ = page.update(cx, |page, cx| {
-                                        page.apply_filter_draft(tags, cx)
-                                    });
+                                    let _ = page
+                                        .update(cx, |page, cx| page.apply_filter_draft(tags, cx));
                                 }
                             }),
                     ),

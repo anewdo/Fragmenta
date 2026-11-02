@@ -15,13 +15,9 @@ pub(crate) fn decode_render_image(target_px: u32) -> Option<Arc<RenderImage>> {
     )
     .map_err(|err| eprintln!("[fragmenta] 应用图标解码失败: {err}"))
     .ok()?;
-    let resized = decoded.resize_exact(
-        target_px,
-        target_px,
-        image::imageops::FilterType::Lanczos3,
-    );
+    let resized = decoded.resize_exact(target_px, target_px, image::imageops::FilterType::Lanczos3);
     let mut bgra = resized.into_rgba8();
-    for pixel in bgra.chunks_exact_mut(4) {
+    for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(bgra)])))

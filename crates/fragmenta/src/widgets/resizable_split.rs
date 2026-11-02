@@ -10,6 +10,9 @@ use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, ElementId, Entity, IntoElement, Pixels, RenderOnce, Window};
 use std::rc::Rc;
 
+/// 分栏拖动回调。
+type ResizeHandler = Rc<dyn Fn(&Entity<ResizableState>, &mut Window, &mut App)>;
+
 /// 水平双栏分栏：拖动分界线调整左栏宽度。
 #[derive(IntoElement)]
 pub struct ResizableSplit {
@@ -19,7 +22,7 @@ pub struct ResizableSplit {
     left_size: Option<Pixels>,
     left_range: Option<Range<Pixels>>,
     state: Option<Entity<ResizableState>>,
-    on_resize: Option<Rc<dyn Fn(&Entity<ResizableState>, &mut Window, &mut App)>>,
+    on_resize: Option<ResizeHandler>,
 }
 
 impl ResizableSplit {

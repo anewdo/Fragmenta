@@ -190,12 +190,7 @@ impl ToastState {
 
     /// 展示一条 toast（入队），并启动该条目的滞留计时；同屏超出上限时
     /// 最老的存活条目立即进入退场。
-    pub(crate) fn show(
-        &mut self,
-        toast: Toast,
-        window: AnyWindowHandle,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn show(&mut self, toast: Toast, window: AnyWindowHandle, cx: &mut Context<Self>) {
         let id = self.next_id;
         self.next_id += 1;
         let dwell = toast.dwell;
@@ -383,9 +378,8 @@ impl Render for ToastState {
 
         let viewport = window.viewport_size();
         // 顶部居中锚点：水平居中（窗口窄于卡片时贴左缘防溢出）
-        let center_left = px(
-            ((viewport.width.as_f32() - tokens::widths::TOAST.as_f32()) / 2.).max(0.),
-        );
+        let center_left =
+            px(((viewport.width.as_f32() - tokens::widths::TOAST.as_f32()) / 2.).max(0.));
         let anchor_top = tokens::heights::TITLE_BAR + tokens::spacing::LG;
         let mut stack = |specs: &[&CardSpec]| {
             v_flex()

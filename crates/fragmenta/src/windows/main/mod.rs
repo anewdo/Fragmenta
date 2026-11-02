@@ -457,7 +457,12 @@ impl Render for MainShell {
                     .when_some(self.app_icon.clone(), |el, icon| {
                         el.child(img(icon).size(TITLEBAR_ICON_SIZE))
                     })
-                    .child(div().text_role(TextRole::ControlLabel).font_weight(FontWeight::BOLD).child("Fragmenta")),
+                    .child(
+                        div()
+                            .text_role(TextRole::ControlLabel)
+                            .font_weight(FontWeight::BOLD)
+                            .child("Fragmenta"),
+                    ),
                 window,
                 cx,
             ))

@@ -3,7 +3,7 @@
 mod common;
 
 use chrono::Local;
-use common::{raw_conn, TempDir};
+use common::{TempDir, raw_conn};
 use fragmenta_core::db::Db;
 use fragmenta_core::model::{Note, NoteFilter, NoteSort};
 
@@ -102,8 +102,7 @@ fn fulltext_search_and_tag_filter() {
     for note in [&mut work, &mut reading, &mut misc] {
         db.upsert_note(note).unwrap();
     }
-    db.set_note_tags(work.id, &[String::from("工作")])
-        .unwrap();
+    db.set_note_tags(work.id, &[String::from("工作")]).unwrap();
     db.set_note_tags(reading.id, &[String::from("读书")])
         .unwrap();
 

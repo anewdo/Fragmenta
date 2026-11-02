@@ -178,7 +178,10 @@ impl Db {
 
     /// 释放 SQLite 可回收的页缓存，降低窗口关闭后的驻留内存。
     pub fn shrink_memory(&self) -> Result<()> {
-        self.conn.lock().unwrap().execute_batch("PRAGMA shrink_memory")?;
+        self.conn
+            .lock()
+            .unwrap()
+            .execute_batch("PRAGMA shrink_memory")?;
         Ok(())
     }
 
