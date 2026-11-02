@@ -1,9 +1,4 @@
-//! 磁贴窗口打开与级联定位（§5.8 弹出行为）。
-//!
-//! 场上磁贴经弱引用登记表追踪：存活探测（窗口关闭 → 视图实体释放 →
-//! 不可升级）收敛已关磁贴，全部关闭后下一次呼出自然回到首开定位。
-//! 级联取创建时机最新的现存磁贴的**当前**位置（`window.bounds()`），
-//! 磁贴被挪动后新磁贴跟随其现位置偏移。
+//! 磁贴窗口打开与级联定位
 
 use std::sync::Mutex;
 
@@ -22,6 +17,12 @@ struct TileEntry {
 }
 
 static TILES: Mutex<Vec<TileEntry>> = Mutex::new(Vec::new());
+
+/// 关窗路径摘除登记项：磁贴关闭即刻移出登记表，不必等下一次呼出。
+pub(super) fn forget(window: gpui_kit::AnyWindowHandle) {
+    let mut tiles = TILES.lock().expect("磁贴登记表锁中毒");
+    tiles.retain(|tile| tile.window.window_id() != window.window_id());
+}
 
 /// 打开新磁贴：每次呼出新开一个窗口，旧磁贴保留（D7 磁贴多开）。
 pub fn open_new(cx: &mut App) {

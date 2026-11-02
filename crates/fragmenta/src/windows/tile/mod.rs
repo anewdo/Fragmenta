@@ -1,13 +1,4 @@
-//! 磁贴（速记窗口，架构 §1 / §5.8）：全局热键呼出的无边框置顶小窗，多开。
-//!
-//! PopUp + `titlebar: None`（Windows 后端原生置顶 + 不进任务栏）；弹出行为
-//! ——首开中心对准光标、连开相对最新现存磁贴的当前位置级联偏移 26 逻辑
-//! 像素、全关重置；打开尺寸取自 settings 布局记忆（`LayoutSettings::tile_*`，
-//! 用户调整磁贴后经视图层防抖写回 settings.json）；圆角边框经
-//! `SetWindowRgn` 窗口区域 + 界面层圆角描边实现。窗口打开与定位归 [`open`]，
-//! 视图 / 保存闭环归 [`view`]；八向边缘 resize 经 win32 的 WM_NCHITTEST
-//! 子类化走系统原生模态循环，最小尺寸由 `window_min_size` 经后端
-//! WM_GETMINMAXINFO 钳制。
+//! 磁贴（速记窗口）：全局热键呼出的无边框置顶小窗，多开。
 
 mod open;
 mod view;

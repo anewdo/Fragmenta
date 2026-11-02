@@ -179,9 +179,14 @@ impl TileView {
             cx.notify();
         });
         let weak = cx.entity().downgrade();
-        window.on_window_should_close(cx, move |_, cx| {
-            weak.update(cx, |this, cx| this.can_close(cx))
-                .unwrap_or(true)
+        window.on_window_should_close(cx, move |window, cx| {
+            let closing = weak
+                .update(cx, |this, cx| this.can_close(cx))
+                .unwrap_or(true);
+            if closing {
+                super::open::forget(window.window_handle());
+            }
+            closing
         });
 
         // 焦点落正文：热键呼出后立即输入
@@ -303,6 +308,7 @@ impl TileView {
 
     fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.can_close(cx) {
+            super::open::forget(window.window_handle());
             window.remove_window();
         }
     }

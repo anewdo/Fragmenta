@@ -1,8 +1,4 @@
-//! Windows 原生窗口工具（生产实现，spike ④/⑤ 结论落地）。
-//!
-//! 光标 DPI 定位（`window_bounds` 语义见架构 §9 条目 5）、置顶切换
-//! （PopUp 默认 `WS_EX_TOPMOST`，取消须 `SetWindowPos`）、圆角窗口区域、
-//! 鼠标拖拽边缘缩放（接管窗口消息处理实现，见 [`install_edge_subclass`]）。
+//! Windows 原生窗口工具
 
 #[cfg(windows)]
 use std::collections::HashMap;

@@ -17,11 +17,27 @@ Fragmenta 是一款轻量的 Windows 桌面速记与笔记管理应用：常驻�
 
 ### Markdown 预览与编辑
 
-### 待办
+![Markdown 预览与编辑](assets/readme/MarkdwonPreview.png)
+
+### 待办事项
+
+![待办事项](assets/readme/Todo.png)
 
 ### 快捷便笺
 
-### 数据导出
+![快捷便笺1](assets/readme/StickyNote1.png)
+![快捷便笺2](assets/readme/StickyNote2.png)
+![快捷便笺3](assets/readme/StickyNote3.png)
+
+### 内存占用
+
+|                        | 后台    | 常驻      |
+| ---------------------- | ------- | --------- |
+| 基础占用               | ≈2~3MB | ≈2~3MB   |
+| 以下数据都计算基础占用 | /       | /         |
+| 主窗口                 | /       | ≈10~15MB |
+| 单个小窗               | /       | ≈9~12MB  |
+| 5个小窗                | /       | ≈12~13MB |
 
 ## 快速开始
 
