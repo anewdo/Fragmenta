@@ -6,6 +6,7 @@ use gpui_kit::component::animation::{EffectTransition, ease_in_out_cubic};
 use gpui_kit::component::{ActiveTheme as _, Icon, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::about::AboutPage;
@@ -21,6 +22,12 @@ use crate::windows::monitor::{clamp_to_display, display_containing};
 
 /// 侧栏展开 / 收起宽度动画时长
 const SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(200);
+
+/// 标题栏应用图标边长：MainShell 局部特例，命名常量集中声明（ADR-0007）。
+const TITLEBAR_ICON_SIZE: Pixels = px(32.);
+
+/// 标题栏图标纹理边长：显示尺寸的 2 倍，覆盖 200% 缩放下的 1:1 采样。
+const TITLEBAR_ICON_TEXTURE: u32 = 64;
 
 /// 主窗口单例登记：窗口 handle 存于 App 全局，重复 `open` 激活既有窗口（D7）。
 struct MainWindow {
@@ -151,6 +158,8 @@ fn initial_bounds(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
 /// 五页常驻 Entity 路由。
 struct MainShell {
     page: Page,
+    /// 标题栏应用图标：与 exe 资源、托盘、关于页同源的内嵌 `.ico` 解码所得。
+    app_icon: Option<Arc<RenderImage>>,
     sidebar_collapsed: bool,
     /// 侧栏拖宽进行中：提示线转深蓝；随拖拽结束（on_drop）复位。
     sidebar_resizing: bool,
@@ -211,6 +220,7 @@ impl MainShell {
         let compact = LayoutClass::from_width(window.viewport_size().width) == LayoutClass::Compact;
         Self {
             page: Page::Notes,
+            app_icon: crate::utils::app_icon::decode_render_image(TITLEBAR_ICON_TEXTURE),
             sidebar_collapsed: compact,
             sidebar_resizing: false,
             sidebar_width,
@@ -444,8 +454,10 @@ impl Render for MainShell {
                 h_flex()
                     .items_center()
                     .gap(tokens::spacing::SM)
-                    .child(Icon::new(IconName::Layers))
-                    .child(div().text_role(TextRole::ControlLabel).child("Fragmenta")),
+                    .when_some(self.app_icon.clone(), |el, icon| {
+                        el.child(img(icon).size(TITLEBAR_ICON_SIZE))
+                    })
+                    .child(div().text_role(TextRole::ControlLabel).font_weight(FontWeight::BOLD).child("Fragmenta")),
                 window,
                 cx,
             ))

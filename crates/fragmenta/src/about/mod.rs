@@ -17,6 +17,9 @@ const LICENSE_LINE: &str = "MIT License © 2026 niuniuzz";
 /// 应用图标展示边长：关于页局部特例，命名常量集中声明（ADR-0007）。
 const ICON_SIZE: Pixels = px(64.);
 
+/// 应用图标纹理边长：显示尺寸的 2 倍，覆盖 200% 缩放下的 1:1 采样。
+const ICON_TEXTURE: u32 = 128;
+
 /// 关于页视图：静态信息页，常驻于主窗口 shell；无状态、无订阅。
 pub(crate) struct AboutPage {
     /// 应用图标：与 exe 资源、托盘同源的内嵌 `.ico` 解码所得。
@@ -26,26 +29,9 @@ pub(crate) struct AboutPage {
 impl AboutPage {
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
-            icon: decode_app_icon(),
+            icon: crate::utils::app_icon::decode_render_image(ICON_TEXTURE),
         }
     }
-}
-
-/// 解码内嵌 `.ico` 为渲染图像：image 的 ICO 解码取最高分辨率帧，
-/// RGBA 需转 BGRA（gpui 渲染层取样序，同其 `decode_static_image_from_decoder`）。
-/// 失败不致命：仅图标缺席，页面其余信息照常展示。
-fn decode_app_icon() -> Option<Arc<RenderImage>> {
-    let decoded = image::load_from_memory_with_format(
-        include_bytes!("../../../../assets/app.ico"),
-        image::ImageFormat::Ico,
-    )
-    .map_err(|err| eprintln!("[fragmenta] 关于页图标解码失败: {err}"))
-    .ok()?;
-    let mut rgba = decoded.to_rgba8();
-    for pixel in rgba.chunks_exact_mut(4) {
-        pixel.swap(0, 2);
-    }
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(rgba)])))
 }
 
 impl Render for AboutPage {

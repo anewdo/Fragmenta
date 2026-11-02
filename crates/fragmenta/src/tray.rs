@@ -4,10 +4,14 @@
 mod imp {
     use gpui_kit::{App, Global};
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
-    use tray_icon::{MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
+    use tray_icon::{Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
     use crate::app::quit;
     use crate::windows;
+
+    /// exe 内嵌图标资源 ID：build.rs 经 winresource 默认以 ID 1 写入，
+    /// gpui-pre-windows 的原生窗口图标同样读取 ID 1。
+    const APP_ICON_RESOURCE_ID: u16 = 1;
 
     /// 托盘对象存全局（非 `Send`，仅 gpui 主循环线程访问）。
     /// 字段持有即保活（drop 会导致图标移除），无读取方。
@@ -46,22 +50,6 @@ mod imp {
         .detach();
     }
 
-    /// 应用图标（与 exe 资源、窗口图标同源）。image 的 ICO 解码取最高
-    /// 分辨率帧，缩放到托盘尺寸后交给 tray-icon。
-    fn app_icon() -> Result<tray_icon::Icon, Box<dyn std::error::Error>> {
-        const TRAY_SIZE: u32 = 32;
-        let decoded = image::load_from_memory_with_format(
-            include_bytes!("../../../assets/app.ico"),
-            image::ImageFormat::Ico,
-        )
-        .map_err(|err| format!("解码 assets/app.ico 失败: {err}"))?;
-        let rgba = decoded
-            .resize_exact(TRAY_SIZE, TRAY_SIZE, image::imageops::FilterType::Lanczos3)
-            .to_rgba8();
-        tray_icon::Icon::from_rgba(rgba.into_raw(), TRAY_SIZE, TRAY_SIZE)
-            .map_err(|err| format!("托盘图标构建失败: {err}").into())
-    }
-
     fn create_tray() -> Result<TrayIcon, Box<dyn std::error::Error>> {
         let menu = Menu::new();
         let open = MenuItem::with_id("open", "打开主窗口", true, None);
@@ -73,7 +61,8 @@ mod imp {
             // 默认 true：左键也会弹菜单；关闭后左键只发 Click 事件
             .with_menu_on_left_click(false)
             .with_tooltip("Fragmenta")
-            .with_icon(app_icon()?)
+            // 与 exe / 原生窗口图标同一资源：由系统按当前图标尺寸选帧
+            .with_icon(Icon::from_resource(APP_ICON_RESOURCE_ID, None)?)
             .build()?)
     }
 
