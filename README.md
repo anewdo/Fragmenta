@@ -11,7 +11,7 @@
   <a href="https://github.com/anewdo/Fragmenta/releases"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white" alt="Windows"></a>
 </p>
 
-Fragmenta 是一款轻量的 Windows 桌面速记与笔记管理应用：常驻内存低、应用体积小，以单个 exe 绿色便携分发，免安装，复制到任意可写目录即可运行。默认情况下，设置、数据库与图片图库都保存在 exe 旁，随目录整体移动。
+Fragmenta 是一款轻量的 Windows 桌面速记与笔记管理应用：基于Rust GPUI Kit构建，原生桌面App，无WebView开销，常驻内存低、应用体积小，以单个 exe 绿色便携分发，免安装，复制到任意可写目录即可运行。
 
 ## 功能
 

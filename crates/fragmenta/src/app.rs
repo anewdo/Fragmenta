@@ -43,6 +43,13 @@ fn silent_start() -> bool {
 
 /// 应用入口；`main.rs` 仅调用此函数。
 pub fn run() {
+    // 单实例守护：已有实例在运行时，仅把"打开主窗口"的启动意图转交过去，
+    // 本进程随即结束（静默启动的第二次调用不打扰已有实例）
+    let silent = silent_start();
+    let Some(instance) = crate::single_instance::claim(!silent) else {
+        return;
+    };
+    let activate_event = instance.event_handle();
     let settings_path = exe_dir().join("settings.json");
     let settings = Settings::load(&settings_path).unwrap_or_else(|err| {
         eprintln!("[fragmenta] 读取设置失败，使用默认设置: {err}");
@@ -80,10 +87,12 @@ pub fn run() {
                 Err(err) => eprintln!("[fragmenta] 磁贴热键注册失败: {err}"),
             }
             tray::init(cx);
+            // 单实例激活：另一个进程的普通启动置位事件，这里打开 / 前置主窗口
+            crate::single_instance::listen(activate_event, cx);
             // 静默启动（ticket 09，开机自启动 Run 键携带 `--silent`）：
             // 不打开主窗口，仅托盘驻留；热键与托盘入口照常可用。
             // 手动启动（无参数）正常打开主窗口。
-            if !silent_start() {
+            if !silent {
                 windows::main::open(cx);
             }
         });

@@ -12,6 +12,7 @@ pub mod tray;
 pub mod about;
 pub mod notes;
 pub mod settings;
+pub mod single_instance;
 pub mod taxonomy;
 pub mod todos;
 pub mod ui;

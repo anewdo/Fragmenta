@@ -4,8 +4,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use fragmenta_core::settings::ThemeMode;
+use gpui_kit::App;
+#[cfg(debug_assertions)]
+use gpui_kit::Global;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode as KitThemeMode, ThemeRegistry};
-use gpui_kit::{App, Global};
 
 use super::tokens;
 
@@ -19,8 +21,10 @@ const CERAMIC_NAME: &str = "Fragmenta Ceramic";
 const DIALOG_DURATION: Duration = Duration::from_millis(280);
 
 /// 最近一次应用的主题选择：开发期热重载按同一选择重放。
+#[cfg(debug_assertions)]
 struct AppliedTheme(ThemeMode);
 
+#[cfg(debug_assertions)]
 impl Global for AppliedTheme {}
 
 /// 同步登记内嵌主题，首次应用前即可使用，发布时无需外置资源。
@@ -45,6 +49,7 @@ pub(crate) fn init(cx: &mut App) {
         theme.light_theme = light;
         theme.dark_theme = dark;
     });
+    #[cfg(debug_assertions)]
     cx.set_global(AppliedTheme(ThemeMode::Light));
 }
 
@@ -102,6 +107,7 @@ pub(crate) fn apply(theme: ThemeMode, system: KitThemeMode, cx: &mut App) {
         theme.focus_ring = false;
         theme.motion.duration_normal = DIALOG_DURATION;
     });
+    #[cfg(debug_assertions)]
     cx.set_global(AppliedTheme(theme));
 }
 
