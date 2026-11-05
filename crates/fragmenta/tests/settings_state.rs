@@ -55,6 +55,58 @@ fn set_theme_persists_broadcasts_and_applies(cx: &mut TestAppContext) {
     assert_eq!(Settings::load(&path).unwrap().theme, ThemeMode::Dark);
 }
 
+/// 未安装字体按系统默认处理：读取回落到 `None`，落盘也存 `None`。
+#[gpui_kit::test]
+fn unavailable_font_family_falls_back_to_system_default(cx: &mut TestAppContext) {
+    let dir = TempDir::new("settings-state-font-missing");
+    let path = dir.path().join("settings.json");
+    let state = new_state(Settings::default(), &path, cx);
+    let events = track_events(&state, cx);
+
+    state.update(cx, |state, cx| {
+        state.set_editor_font_family(Some("Not Installed Font".into()), cx)
+    });
+
+    let family = state.read_with(cx, |state, _| {
+        state.editor_font_family().map(str::to_string)
+    });
+    assert_eq!(family, None);
+    assert_eq!(*events.borrow(), vec![SettingsEvent::Changed]);
+    assert_eq!(Settings::load(&path).unwrap().editor_font_family, None);
+}
+
+/// 删除自定义字体：候选移除，正在使用它的排版位回到系统默认，
+/// 一次落盘 + 一次广播；重载后不再出现该字体。
+#[gpui_kit::test]
+fn remove_custom_font_resets_used_slots_and_persists(cx: &mut TestAppContext) {
+    let dir = TempDir::new("settings-state-font-remove");
+    let path = dir.path().join("settings.json");
+    let settings = Settings {
+        custom_font_families: vec!["JetBrains Mono".into(), "Fira Code".into()],
+        editor_font_family: Some("JetBrains Mono".into()),
+        tile_font_family: Some("Fira Code".into()),
+        ..Default::default()
+    };
+    let state = new_state(settings, &path, cx);
+    let events = track_events(&state, cx);
+
+    // 大小写不敏感匹配；仅清空正在使用它的排版位
+    state.update(cx, |state, cx| {
+        state.remove_custom_font("jetbrains mono", cx)
+    });
+
+    assert_eq!(
+        state.read_with(cx, |state, _| state.custom_font_families().to_vec()),
+        vec!["Fira Code".to_string()]
+    );
+    assert_eq!(*events.borrow(), vec![SettingsEvent::Changed]);
+
+    let reloaded = Settings::load(&path).unwrap();
+    assert_eq!(reloaded.custom_font_families, vec!["Fira Code".to_string()]);
+    assert_eq!(reloaded.editor_font_family, None);
+    assert_eq!(reloaded.tile_font_family, Some("Fira Code".to_string()));
+}
+
 /// set_theme 切换到色系主题：以浅色模式生效、落盘 + 广播。
 #[gpui_kit::test]
 fn set_theme_color_theme_applies_as_light(cx: &mut TestAppContext) {

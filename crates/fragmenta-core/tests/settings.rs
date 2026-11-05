@@ -3,8 +3,8 @@
 mod common;
 
 use fragmenta_core::settings::{
-    FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, LINE_HEIGHT_DEFAULT, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
-    Settings, ThemeMode,
+    DEFAULT_FONT_FAMILY, FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, LINE_HEIGHT_DEFAULT,
+    LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, Settings, ThemeMode,
 };
 
 #[test]
@@ -41,7 +41,7 @@ fn font_sizes_default_roundtrip_and_clamp() {
 
 #[test]
 fn typography_defaults_roundtrip_and_clamp() {
-    // 字体族与行距：默认跟随系统 / 1.6 倍；保存后重读保留；
+    // 字体族与行距：默认思源黑体 / 1.6 倍；保存后重读保留；
     // 字体族去首尾空白，空串视为跟随系统；越界行距读取时钳制
     let dir = common::TempDir::new("settings-typography");
     let path = dir.path().join("settings.json");
@@ -63,8 +63,14 @@ fn typography_defaults_roundtrip_and_clamp() {
     assert_eq!(loaded.tile_line_height, 1.4);
 
     let default = Settings::default();
-    assert_eq!(default.editor_font_family, None);
-    assert_eq!(default.tile_font_family, None);
+    assert_eq!(
+        default.editor_font_family.as_deref(),
+        Some(DEFAULT_FONT_FAMILY)
+    );
+    assert_eq!(
+        default.tile_font_family.as_deref(),
+        Some(DEFAULT_FONT_FAMILY)
+    );
     assert_eq!(default.editor_line_height, LINE_HEIGHT_DEFAULT);
     assert_eq!(default.tile_line_height, LINE_HEIGHT_DEFAULT);
 
@@ -78,6 +84,34 @@ fn typography_defaults_roundtrip_and_clamp() {
     assert_eq!(loaded.tile_line_height, LINE_HEIGHT_MIN);
     assert_eq!(loaded.editor_font_family, None);
     assert_eq!(loaded.tile_font_family.as_deref(), Some("SimHei"));
+}
+
+#[test]
+fn custom_font_families_roundtrip_and_normalize() {
+    // 自定义字体候选：保存后重读保留；读取时去空白、丢空值、大小写去重
+    let dir = common::TempDir::new("settings-custom-fonts");
+    let path = dir.path().join("settings.json");
+    let settings = Settings {
+        custom_font_families: vec!["JetBrains Mono".into(), "霞鹜文楷".into()],
+        ..Default::default()
+    };
+    settings.save(&path).expect("保存失败");
+    let loaded = Settings::load(&path).expect("读取失败");
+    assert_eq!(
+        loaded.custom_font_families,
+        vec!["JetBrains Mono".to_string(), "霞鹜文楷".to_string()]
+    );
+
+    std::fs::write(
+        &path,
+        r#"{"custom_font_families":["  Arial  ","arial","","  ","Times New Roman"]}"#,
+    )
+    .expect("写入失败");
+    let loaded = Settings::load(&path).expect("读取失败");
+    assert_eq!(
+        loaded.custom_font_families,
+        vec!["Arial".to_string(), "Times New Roman".to_string()]
+    );
 }
 
 #[test]

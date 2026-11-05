@@ -20,6 +20,11 @@ pub const FONT_SIZE_MIN_PX: f32 = 12.;
 pub const FONT_SIZE_MAX_PX: f32 = 24.;
 /// 内容正文字号默认值（逻辑像素）。
 pub const FONT_SIZE_DEFAULT_PX: f32 = 16.;
+/// 出厂默认阅读字体：思源黑体。
+///
+/// 设置文件保存出厂族名，应用层启动时按本机安装情况解析族名别名；未安装
+/// 时本次运行回落系统默认，之后安装字体会在下次启动生效。
+pub const DEFAULT_FONT_FAMILY: &str = "Source Han Sans SC";
 /// 行距倍数的可调范围与默认值（相对字号）。
 pub const LINE_HEIGHT_MIN: f32 = 1.2;
 pub const LINE_HEIGHT_MAX: f32 = 2.0;
@@ -35,12 +40,19 @@ pub struct Settings {
     /// 编辑器与主窗口列表的正文字号（逻辑像素）。
     pub editor_font_px: f32,
     /// 编辑器标题与正文的字体族；`None` 跟随系统默认。
+    ///
+    /// 应用层只经 `FontSettings` 写入该字段，以同步已解析的字体族缓存。
     pub editor_font_family: Option<String>,
     /// 编辑器标题与正文的行距倍数。
     pub editor_line_height: f32,
+    /// 从系统字体补充到字体下拉的自定义字体族（按添加顺序、去重）；
+    /// 内置候选之外的用户选择，两份下拉共享。
+    pub custom_font_families: Vec<String>,
     /// 磁贴小窗的标题 / 正文字号（逻辑像素）。
     pub tile_font_px: f32,
     /// 磁贴小窗标题与正文的字体族；`None` 跟随系统默认。
+    ///
+    /// 应用层只经 `FontSettings` 写入该字段，以同步已解析的字体族缓存。
     pub tile_font_family: Option<String>,
     /// 磁贴小窗标题与正文的行距倍数。
     pub tile_line_height: f32,
@@ -94,10 +106,11 @@ impl Default for Settings {
         Self {
             theme: ThemeMode::default(),
             editor_font_px: FONT_SIZE_DEFAULT_PX,
-            editor_font_family: None,
+            editor_font_family: Some(DEFAULT_FONT_FAMILY.into()),
             editor_line_height: LINE_HEIGHT_DEFAULT,
+            custom_font_families: Vec::new(),
             tile_font_px: FONT_SIZE_DEFAULT_PX,
-            tile_font_family: None,
+            tile_font_family: Some(DEFAULT_FONT_FAMILY.into()),
             tile_line_height: LINE_HEIGHT_DEFAULT,
             data_dir: default_data_dir(),
             tile_hotkey: default_tile_hotkey(),
@@ -134,6 +147,19 @@ pub fn normalize_font_family(family: Option<String>) -> Option<String> {
         .filter(|family| !family.is_empty())
 }
 
+/// 自定义字体族列表规范化：去首尾空白、丢弃空值，按 ASCII 大小写不敏感去重
+///（settings.json 可被手动编辑，重复项会让下拉出现同名选项）。
+pub fn normalize_font_families(families: Vec<String>) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::with_capacity(families.len());
+    for family in families {
+        let family = family.trim();
+        if !family.is_empty() && !kept.iter().any(|name| name.eq_ignore_ascii_case(family)) {
+            kept.push(family.to_string());
+        }
+    }
+    kept
+}
+
 /// 默认数据目录：{exe_dir}/data。
 fn default_data_dir() -> PathBuf {
     std::env::current_exe()
@@ -166,6 +192,8 @@ impl Settings {
                 settings.tile_font_px = clamp_font_px(settings.tile_font_px);
                 settings.editor_font_family = normalize_font_family(settings.editor_font_family);
                 settings.tile_font_family = normalize_font_family(settings.tile_font_family);
+                settings.custom_font_families =
+                    normalize_font_families(std::mem::take(&mut settings.custom_font_families));
                 settings.editor_line_height = clamp_line_height(settings.editor_line_height);
                 settings.tile_line_height = clamp_line_height(settings.tile_line_height);
                 Ok(settings)

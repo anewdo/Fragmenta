@@ -15,6 +15,7 @@ use crate::autostart::AutostartError;
 use crate::editor::ImageStore;
 use crate::hotkey::{HotkeyController, HotkeyError};
 use crate::notes::{NotesStore, SaveStatus};
+use crate::settings::fonts::{FontScope, FontSettings};
 use crate::settings::migrate::{self, DataDirError};
 use crate::ui::theme;
 
@@ -38,6 +39,8 @@ pub struct SettingsState {
     /// 共享数据库门面（与 notes / todos store 同一 `Arc<Db>`），
     /// 供 `set_data_dir` 迁移编排在线备份与连接热替换。
     db: Arc<Db>,
+    /// 本机字体快照与已解析的两个排版位字体族。
+    fonts: FontSettings,
     /// 窗口几何（磁贴尺寸 / 主窗口位置）防抖写盘任务；`None` 即无待写内容。
     bounds_persist: Option<Task<()>>,
     /// 应用退出兜底：退出前落盘未到期的窗口几何。
@@ -56,10 +59,14 @@ impl SettingsState {
             state.flush_bounds_persist();
             async {}
         });
+        // 字体族在载入时解析一次并缓存：读取侧（编辑器 / 小窗每帧渲染）不再对
+        // 字体列表做线性扫描，保存值保持原样。
+        let fonts = FontSettings::load(&settings, cx.text_system().all_font_names());
         let mut state = Self {
             settings,
             path,
             db,
+            fonts,
             bounds_persist: None,
             _quit_sub: quit_sub,
         };
@@ -90,7 +97,7 @@ impl SettingsState {
 
     /// 编辑器标题与正文的字体族；`None` 跟随系统默认。
     pub fn editor_font_family(&self) -> Option<&str> {
-        self.settings.editor_font_family.as_deref()
+        self.fonts.editor()
     }
 
     /// 编辑器标题与正文的行距倍数。
@@ -100,7 +107,22 @@ impl SettingsState {
 
     /// 磁贴小窗标题与正文的字体族；`None` 跟随系统默认。
     pub fn tile_font_family(&self) -> Option<&str> {
-        self.settings.tile_font_family.as_deref()
+        self.fonts.tile()
+    }
+
+    /// 启动时的系统字体快照（含随附字体），供设置页标注未安装项。
+    pub fn installed_font_names(&self) -> &[String] {
+        self.fonts.installed()
+    }
+
+    /// 与状态共享的系统字体快照，供字体选择弹窗跨帧持有。
+    pub(crate) fn installed_font_names_shared(&self) -> std::rc::Rc<Vec<String>> {
+        self.fonts.installed_shared()
+    }
+
+    /// 用户从系统字体中添加的自定义字体族（两份下拉共享）。
+    pub fn custom_font_families(&self) -> &[String] {
+        &self.settings.custom_font_families
     }
 
     /// 磁贴小窗标题与正文的行距倍数。
@@ -251,11 +273,12 @@ impl SettingsState {
 
     /// 更新编辑器字体族：`None` 回到系统默认，持久化 + 广播。
     pub fn set_editor_font_family(&mut self, family: Option<String>, cx: &mut Context<Self>) {
-        let family = settings::normalize_font_family(family);
-        if self.settings.editor_font_family == family {
+        if !self
+            .fonts
+            .set(&mut self.settings, FontScope::Editor, family)
+        {
             return;
         }
-        self.settings.editor_font_family = family;
         self.persist();
         cx.emit(SettingsEvent::Changed);
     }
@@ -273,11 +296,30 @@ impl SettingsState {
 
     /// 更新小窗字体族：`None` 回到系统默认，持久化 + 广播。
     pub fn set_tile_font_family(&mut self, family: Option<String>, cx: &mut Context<Self>) {
-        let family = settings::normalize_font_family(family);
-        if self.settings.tile_font_family == family {
+        if !self.fonts.set(&mut self.settings, FontScope::Tile, family) {
             return;
         }
-        self.settings.tile_font_family = family;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 从系统字体中选择并应用到指定排版位：族名先解析为本机实际安装名，
+    /// 新字体追加到自定义候选（两份下拉共享）；一次落盘 + 一次广播。
+    /// 未安装或已选同一字体且无需新增候选时不产生改动。
+    pub fn apply_system_font(&mut self, scope: FontScope, family: String, cx: &mut Context<Self>) {
+        if !self.fonts.apply(&mut self.settings, scope, family) {
+            return;
+        }
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 从自定义候选移除字体（下拉项右侧叉号）：正在使用该字体的排版位回到
+    /// 系统默认，避免移除后当前值又被回填为候选项；一次落盘 + 一次广播。
+    pub fn remove_custom_font(&mut self, family: &str, cx: &mut Context<Self>) {
+        if !self.fonts.remove_custom(&mut self.settings, family) {
+            return;
+        }
         self.persist();
         cx.emit(SettingsEvent::Changed);
     }

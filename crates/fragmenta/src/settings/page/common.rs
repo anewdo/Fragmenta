@@ -87,6 +87,27 @@ pub(super) fn setting_row(
         .child(field)
 }
 
+/// 设置行布局（无说明）：左侧图标 + 标题，右侧控件。
+pub(super) fn setting_row_plain(
+    icon: IconName,
+    title: &'static str,
+    muted: Hsla,
+    field: impl IntoElement,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap(tokens::spacing::LG)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(row_title(icon, title, muted)),
+        )
+        .child(field)
+}
+
 /// 设置项错误提示：固定元信息字号 + 危险色，右对齐展示。
 pub(super) fn error_text(message: impl IntoElement, danger: Hsla) -> impl IntoElement {
     div()

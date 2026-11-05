@@ -1,16 +1,21 @@
 //! 外观组：主题色卡与编辑器 / 小窗排版卡片。
 
+use std::rc::Rc;
+
 use fragmenta_core::settings::ThemeMode;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::Disableable as _;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::combobox::Combobox;
 use gpui_kit::component::slider::{Slider, SliderState};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::common::{card_header, setting_row};
-use super::{FontCombobox, SettingsPage};
-use crate::settings::SettingsStore;
+use super::SettingsPage;
+use super::common::{card_header, row_title, setting_row_plain};
+use super::typography::FontCombobox;
+use crate::settings::{FontScope, SettingsStore};
 use crate::ui::layout::{CardStyle, setting_card};
 use crate::ui::theme;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
@@ -30,7 +35,7 @@ const TILE_FONT_SAMPLE: (&str, &str) = ("速记", "Memo");
 
 impl SettingsPage {
     /// "外观"组：主题色卡单选 + 编辑器 / 小窗排版（字体、字号、行距）。
-    pub(super) fn appearance_group(&self, cx: &App) -> impl IntoElement {
+    pub(super) fn appearance_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let (theme, editor_family, tile_family) = {
             let settings = cx.global::<SettingsStore>().0.read(cx);
             (
@@ -49,6 +54,14 @@ impl SettingsPage {
             )
         };
         let card = CardStyle::from_theme(cx.theme());
+        let card_style = TypographyCardStyle {
+            muted,
+            foreground,
+            card,
+        };
+        let disabled = self.typography.font_picker.is_open();
+        let editor_add = AddFontHandlers::new(cx, FontScope::Editor);
+        let tile_add = AddFontHandlers::new(cx, FontScope::Tile);
         v_flex()
             .w_full()
             .gap(tokens::spacing::SM)
@@ -57,84 +70,166 @@ impl SettingsPage {
                 theme_card(theme, muted, primary, border, cx),
             ))
             .child(typography_card(
-                IconName::Type,
-                "编辑器排版",
-                "仅在主窗口编辑器生效：调整标题与正文的字体、字号与行距；预览与左侧列表保持内置样式",
-                &self.editor_font_combo,
-                self.editor_font_preview,
-                self.editor_line_preview,
-                &self.editor_font_slider,
-                &self.editor_line_slider,
-                editor_family.as_deref(),
-                EDITOR_FONT_SAMPLE,
-                muted,
-                foreground,
-                card,
+                TypographyCardSpec {
+                    icon: IconName::Type,
+                    title: "编辑器排版",
+                    description: "仅在主窗口编辑器生效",
+                    font_combo: &self.typography.editor_font_combo,
+                    size_value: self.typography.editor_font_preview,
+                    line_value: self.typography.editor_line_preview,
+                    size_slider: &self.typography.editor_font_slider,
+                    line_slider: &self.typography.editor_line_slider,
+                    family: editor_family.as_deref(),
+                    samples: EDITOR_FONT_SAMPLE,
+                    add_id: "editor-font-add",
+                    add_disabled: disabled,
+                },
+                card_style,
+                editor_add,
             ))
             .child(typography_card(
-                IconName::AppWindow,
-                "小窗排版",
-                "仅在磁贴小窗生效：调整标题与正文的字体、字号与行距",
-                &self.tile_font_combo,
-                self.tile_font_preview,
-                self.tile_line_preview,
-                &self.tile_font_slider,
-                &self.tile_line_slider,
-                tile_family.as_deref(),
-                TILE_FONT_SAMPLE,
-                muted,
-                foreground,
-                card,
+                TypographyCardSpec {
+                    icon: IconName::AppWindow,
+                    title: "小窗排版",
+                    description: "仅在磁贴小窗生效",
+                    font_combo: &self.typography.tile_font_combo,
+                    size_value: self.typography.tile_font_preview,
+                    line_value: self.typography.tile_line_preview,
+                    size_slider: &self.typography.tile_font_slider,
+                    line_slider: &self.typography.tile_line_slider,
+                    family: tile_family.as_deref(),
+                    samples: TILE_FONT_SAMPLE,
+                    add_id: "tile-font-add",
+                    add_disabled: disabled,
+                },
+                card_style,
+                tile_add,
             ))
     }
 }
 
-/// 排版设置卡：字体下拉、字号与行距滑杆（与标题同行）与实时示例。
-#[allow(clippy::too_many_arguments)]
-fn typography_card(
+type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+type MouseUpHandler = Rc<dyn Fn(&MouseUpEvent, &mut Window, &mut App)>;
+
+/// “添加”按钮的激活处理器。
+///
+/// 字体下拉展开时，弹层在捕获阶段吞掉外部按下事件，按钮的点击不会触发；
+/// 鼠标抬起发生在弹层关闭之后，因此额外用抬起事件打开字体选择弹窗。
+struct AddFontHandlers {
+    on_click: ClickHandler,
+    on_mouse_up: MouseUpHandler,
+}
+
+impl AddFontHandlers {
+    fn new(cx: &Context<SettingsPage>, scope: FontScope) -> Self {
+        Self {
+            on_click: Rc::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.typography.font_picker.open(scope, window, cx)
+            })),
+            on_mouse_up: Rc::new(cx.listener(move |this, _: &MouseUpEvent, window, cx| {
+                if !this.typography.font_picker.is_open() {
+                    this.typography.font_picker.open(scope, window, cx)
+                }
+            })),
+        }
+    }
+}
+
+/// 排版卡片内容；颜色与卡片样式由调用方统一传入。
+struct TypographyCardSpec<'a> {
     icon: IconName,
     title: &'static str,
     description: &'static str,
-    font_combo: &Entity<FontCombobox>,
+    font_combo: &'a Entity<FontCombobox>,
     size_value: f32,
     line_value: f32,
-    size_slider: &Entity<SliderState>,
-    line_slider: &Entity<SliderState>,
-    family: Option<&str>,
+    size_slider: &'a Entity<SliderState>,
+    line_slider: &'a Entity<SliderState>,
+    family: Option<&'a str>,
     samples: (&'static str, &'static str),
+    add_id: &'static str,
+    add_disabled: bool,
+}
+
+/// 排版卡片的主题色与卡片样式。
+#[derive(Clone, Copy)]
+struct TypographyCardStyle {
     muted: Hsla,
     foreground: Hsla,
     card: CardStyle,
+}
+
+/// 排版设置卡：字体下拉、字号与行距滑杆（与标题同行）与实时示例。
+fn typography_card(
+    spec: TypographyCardSpec<'_>,
+    style: TypographyCardStyle,
+    add: AddFontHandlers,
 ) -> impl IntoElement {
+    let TypographyCardSpec {
+        icon,
+        title,
+        description,
+        font_combo,
+        size_value,
+        line_value,
+        size_slider,
+        line_slider,
+        family,
+        samples,
+        add_id,
+        add_disabled,
+    } = spec;
+    let TypographyCardStyle {
+        muted,
+        foreground,
+        card,
+    } = style;
     setting_card(
         card,
         v_flex()
             .w_full()
             .gap(tokens::spacing::MD)
             .child(card_header(icon, title, description, muted))
-            .child(setting_row(
+            .child(setting_row_plain(
                 IconName::Type,
                 "字体",
-                "仅列常用阅读与编辑器字体，默认跟随系统",
                 muted,
-                div()
-                    .w(FONT_FAMILY_WIDTH)
-                    .child(Combobox::new(font_combo).w_full()),
+                h_flex()
+                    .gap(tokens::spacing::SM)
+                    .child(
+                        div()
+                            .w(FONT_FAMILY_WIDTH)
+                            .child(Combobox::new(font_combo).w_full()),
+                    )
+                    .child({
+                        let on_click = add.on_click.clone();
+                        let on_mouse_up = add.on_mouse_up.clone();
+                        div()
+                            .on_mouse_up(MouseButton::Left, move |event, window, cx| {
+                                on_mouse_up(event, window, cx)
+                            })
+                            .child(
+                                Button::new(add_id)
+                                    .outline()
+                                    .icon(IconName::Plus)
+                                    .label("添加")
+                                    .disabled(add_disabled)
+                                    .on_click(move |event, window, cx| on_click(event, window, cx)),
+                            )
+                    }),
             ))
-            .child(setting_row(
+            .child(setting_row_plain(
                 IconName::ALargeSmall,
                 "字号",
-                "12–24 px，拖动滑杆即时预览",
                 muted,
                 h_flex()
                     .gap(tokens::spacing::MD)
                     .child(Slider::new(size_slider).w(FONT_SLIDER_WIDTH))
                     .child(value_label(format!("{size_value:.0} px"), muted)),
             ))
-            .child(setting_row(
+            .child(setting_row_plain(
                 IconName::Baseline,
                 "行距",
-                "1.2–2.0 倍，标题与正文同步生效",
                 muted,
                 h_flex()
                     .gap(tokens::spacing::MD)
@@ -262,12 +357,7 @@ fn theme_card(
     v_flex()
         .w_full()
         .gap(tokens::spacing::SM)
-        .child(card_header(
-            IconName::Palette,
-            "主题",
-            "切换即时生效于全部窗口；自动仅在浅色 / 深色之间跟随系统",
-            muted,
-        ))
+        .child(row_title(IconName::Palette, "主题", muted))
         .child(
             h_flex()
                 .gap(tokens::spacing::MD)

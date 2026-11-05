@@ -21,6 +21,7 @@ use gpui_kit::*;
 use super::TaxonomyState;
 use crate::ui::dialog_motion::DialogMotion;
 use crate::ui::focus::{TextFieldExt as _, input_border};
+use crate::ui::modal_session::{ModalSession, ModalSessionHost, begin_close};
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::utils::palette::{format_hex_color, parse_hex_color};
 use crate::widgets::color_picker::{color_picker_content, create_picker, fallback_picker_color};
@@ -35,13 +36,6 @@ const MODAL_CONTENT: Pixels = px(340.);
 
 /// 弹窗关闭动作：遮罩 / 关闭按钮 / 取消与保存按钮共用的回调形态。
 type CloseAction = Rc<dyn Fn(&mut Window, &mut App)>;
-
-/// 弹窗阶段：关闭动画期间仍保持挂载，计时结束才真正移除。
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ModalPhase {
-    Open,
-    Closing,
-}
 
 /// 关闭动画结束（焦点归还完成后）广播，宿主据此移除弹窗。
 pub(crate) enum TagModalEvent {
@@ -63,15 +57,16 @@ pub(crate) struct TagModal {
     picker: Entity<ColorPickerState>,
     /// 当前选色；`None` 为未选色（胶囊跟随主题中性样式）。
     color: Option<Hsla>,
-    phase: ModalPhase,
-    /// 动画序号：阶段切换时递增，让淡入淡出以新 id 重新播放。
-    seq: usize,
-    /// 焦点陷阱宿主焦点（Esc / Enter 在弹窗内响应）。
-    focus: FocusHandle,
-    /// 打开前的焦点，关闭动画结束后归还。
-    previous_focus: Option<FocusHandle>,
+    /// 关闭动画、动画序号与焦点归还。
+    session: ModalSession,
     /// 取色器滑杆 / hex 变更 → 更新草稿颜色。
     _picker_sub: Subscription,
+}
+
+impl ModalSessionHost for TagModal {
+    fn modal_session(&mut self) -> Option<&mut ModalSession> {
+        Some(&mut self.session)
+    }
 }
 
 impl TagModal {
@@ -112,10 +107,7 @@ impl TagModal {
             name_input: name_input.clone(),
             picker,
             color,
-            phase: ModalPhase::Open,
-            seq,
-            focus: cx.focus_handle(),
-            previous_focus: window.focused(cx),
+            session: ModalSession::new(seq, cx.focus_handle(), window.focused(cx)),
             _picker_sub: picker_sub,
         };
         name_input.update(cx, |state, cx| state.focus(window, cx));
@@ -197,30 +189,15 @@ impl TagModal {
     /// 进入关闭阶段：`save` 时先提交，失败保持弹窗；随后播放反向动画，
     /// 计时结束后归还焦点并广播 `Closed` 交由宿主移除。
     fn begin_close(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.phase == ModalPhase::Closing {
+        if self.session.is_closing() {
             return;
         }
         if save && !self.commit(window, cx) {
             return;
         }
-        self.phase = ModalPhase::Closing;
-        self.seq = self.seq.wrapping_add(1);
-        cx.notify();
-        let duration = DialogMotion::for_window(window, cx).duration();
-
-        let weak = cx.entity().downgrade();
-        cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor().timer(duration).await;
-            let _ = weak.update_in(cx, |this, window, cx| {
-                if this.phase == ModalPhase::Closing {
-                    if let Some(handle) = this.previous_focus.take() {
-                        window.focus(&handle, cx);
-                    }
-                    cx.emit(TagModalEvent::Closed);
-                }
-            });
-        })
-        .detach();
+        begin_close(&mut self.session, window, cx, |_, _, cx| {
+            cx.emit(TagModalEvent::Closed)
+        });
     }
 }
 
@@ -229,9 +206,9 @@ impl Render for TagModal {
         let theme = cx.theme().clone();
         let muted = theme.muted_foreground;
         let danger = theme.danger;
-        let closing = self.phase == ModalPhase::Closing;
-        let seq = self.seq;
-        let focus = self.focus.clone();
+        let closing = self.session.is_closing();
+        let seq = self.session.seq();
+        let focus = self.session.focus().clone();
         let motion = DialogMotion::for_window(window, cx);
         let weak = cx.entity().downgrade();
 

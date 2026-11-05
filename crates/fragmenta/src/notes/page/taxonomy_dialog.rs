@@ -23,6 +23,7 @@ use crate::notes::components::TagChip;
 use crate::taxonomy::TaxonomyStore;
 use crate::ui::dialog_motion::DialogMotion;
 use crate::ui::focus::{TextFieldExt as _, input_border};
+use crate::ui::modal_session::{ModalSession, ModalSessionHost, begin_close};
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
 use crate::utils::palette::format_hex_color;
 use crate::widgets::color_picker::{
@@ -40,14 +41,7 @@ const TAG_LIST_MAX_HEIGHT: Pixels = px(168.);
 /// 弹窗关闭动作：遮罩 / 关闭按钮 / 取消与保存按钮共用的回调形态。
 type CloseAction = Rc<dyn Fn(&mut Window, &mut App)>;
 
-/// 弹窗阶段：关闭动画期间仍保持挂载，计时结束才真正移除。
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ModalPhase {
-    Open,
-    Closing,
-}
-
-/// 弹窗会话状态：输入实体、已选标签、取色器与动画阶段。
+/// 弹窗会话状态：输入实体、已选标签、取色器与关闭动画。
 pub(super) struct TaxonomyModal {
     note_id: i64,
     tag_input: Entity<InputState>,
@@ -58,13 +52,8 @@ pub(super) struct TaxonomyModal {
     new_tag_color: Option<Hsla>,
     /// 取色 Popover 是否展开（受控）。
     color_open: bool,
-    phase: ModalPhase,
-    /// 动画序号：阶段切换时递增，让淡入淡出以新 id 重新播放。
-    seq: usize,
-    /// 焦点陷阱宿主焦点（Esc / Tab 在弹窗内循环）。
-    focus: FocusHandle,
-    /// 打开前的焦点，关闭动画结束后归还。
-    previous_focus: Option<FocusHandle>,
+    /// 关闭动画、动画序号与焦点归还。
+    session: ModalSession,
     /// 输入框回车 → 添加标签。
     _tag_sub: Subscription,
     /// 取色器滑杆 / hex 变更 → 更新新增标签颜色。
@@ -110,10 +99,7 @@ impl NotesPage {
             selected: note.tags,
             new_tag_color: None,
             color_open: false,
-            phase: ModalPhase::Open,
-            seq: self.taxonomy_seq,
-            focus: focus.clone(),
-            previous_focus: window.focused(cx),
+            session: ModalSession::new(self.taxonomy_seq, focus.clone(), window.focused(cx)),
             _tag_sub: tag_sub,
             _picker_sub: picker_sub,
         });
@@ -203,9 +189,9 @@ impl NotesPage {
         let theme = cx.theme().clone();
         let muted = theme.muted_foreground;
         let danger = theme.danger;
-        let focus = modal.focus.clone();
-        let closing = modal.phase == ModalPhase::Closing;
-        let seq = modal.seq;
+        let focus = modal.session.focus().clone();
+        let closing = modal.session.is_closing();
+        let seq = modal.session.seq();
         let motion = DialogMotion::for_window(window, cx);
         let tag_border = input_border(
             &theme,
@@ -454,7 +440,7 @@ impl NotesPage {
 
         let close_for_request = close_cancel.clone();
         let dialog = Dialog::new(cx)
-            .focus_handle(modal.focus.clone())
+            .focus_handle(modal.session.focus().clone())
             .dismiss_below_y(tokens::heights::TITLE_BAR)
             // 遮罩关闭由自定义 backdrop 处理（kit 包装层仅负责截断其下图层）
             .close_on_backdrop_press(false)
@@ -480,35 +466,15 @@ impl NotesPage {
         let Some(modal) = self.taxonomy_modal.as_mut() else {
             return;
         };
-        if modal.phase == ModalPhase::Closing {
-            return;
-        }
-        modal.phase = ModalPhase::Closing;
-        modal.seq = modal.seq.wrapping_add(1);
-        let seq = modal.seq;
-        cx.notify();
-        let duration = DialogMotion::for_window(window, cx).duration();
+        begin_close(&mut modal.session, window, cx, |this, _, cx| {
+            this.taxonomy_modal = None;
+            cx.notify();
+        });
+    }
+}
 
-        let weak = cx.entity().downgrade();
-        cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor().timer(duration).await;
-            let _ = weak.update_in(cx, |this, window, cx| {
-                if this
-                    .taxonomy_modal
-                    .as_ref()
-                    .is_some_and(|modal| modal.seq == seq && modal.phase == ModalPhase::Closing)
-                {
-                    let previous = this
-                        .taxonomy_modal
-                        .take()
-                        .and_then(|modal| modal.previous_focus);
-                    if let Some(handle) = previous {
-                        window.focus(&handle, cx);
-                    }
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+impl ModalSessionHost for NotesPage {
+    fn modal_session(&mut self) -> Option<&mut ModalSession> {
+        self.taxonomy_modal.as_mut().map(|modal| &mut modal.session)
     }
 }

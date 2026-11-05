@@ -15,6 +15,68 @@ use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 /// 热键录入框宽度：设置页局部控件特例。
 const HOTKEY_RECORDER_WIDTH: Pixels = px(240.);
 
+/// 热键录入会话状态：焦点、监听态、和弦进行中的修饰键与错误提示。
+pub(super) struct HotkeyRecorder {
+    focus: FocusHandle,
+    /// 是否处于监听态（点击进入，捕获完成 / 取消退出）。
+    listening: bool,
+    /// 和弦进行中已按下的修饰键展示（如 "Ctrl + Alt"）。
+    pending_mods: Option<String>,
+    /// 录入错误提示（红字展示）。
+    error: Option<&'static str>,
+}
+
+impl HotkeyRecorder {
+    pub(super) fn new(cx: &mut Context<SettingsPage>) -> Self {
+        Self {
+            focus: cx.focus_handle(),
+            listening: false,
+            pending_mods: None,
+            error: None,
+        }
+    }
+
+    /// 进入监听态：清空上一次的和弦与错误提示。
+    fn begin(&mut self) {
+        self.listening = true;
+        self.pending_mods = None;
+        self.error = None;
+    }
+
+    /// 退出监听态：不修改热键，清空和弦与错误提示。
+    fn cancel(&mut self) {
+        self.listening = false;
+        self.pending_mods = None;
+        self.error = None;
+    }
+
+    /// 录入成功：退出监听态并清空和弦与错误提示。
+    fn succeed(&mut self) {
+        self.listening = false;
+        self.pending_mods = None;
+        self.error = None;
+    }
+
+    /// 录入失败：清空和弦；`stop_listening` 为 true 时同时退出监听态。
+    fn fail(&mut self, error: &'static str, stop_listening: bool) {
+        self.pending_mods = None;
+        self.error = Some(error);
+        if stop_listening {
+            self.listening = false;
+        }
+    }
+
+    /// 更新和弦进行中的修饰键展示。
+    fn set_pending_mods(&mut self, mods: Option<String>) {
+        self.pending_mods = mods;
+    }
+
+    /// 取走和弦展示；返回此前是否已按下修饰键。
+    fn take_pending_mods(&mut self) -> bool {
+        self.pending_mods.take().is_some()
+    }
+}
+
 impl SettingsPage {
     /// "快捷键"组：磁贴呼出热键捕获式录入框与红字错误提示。
     pub(super) fn hotkey_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -34,15 +96,16 @@ impl SettingsPage {
                 colors.danger,
             )
         };
-        let focus = self.hotkey_focus.clone();
-        let listening = self.hotkey_listening;
-        let pending_mods = self.hotkey_pending_mods.clone();
+        let focus = self.hotkey.focus.clone();
+        let listening = self.hotkey.listening;
+        let pending_mods = self.hotkey.pending_mods.clone();
         // 启动期已保存热键注册失败：红字提示改绑（改绑成功后控制器清除冲突）
         let conflict = cx
             .try_global::<HotkeyController>()
             .is_some_and(HotkeyController::conflict);
         let error = self
-            .hotkey_error
+            .hotkey
+            .error
             .or(conflict.then_some("检测到快捷键冲突，请更换组合"));
 
         let recorder = div()
@@ -72,23 +135,19 @@ impl SettingsPage {
             })
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 // 点击框外退出监听态，不误改热键
-                if this.hotkey_listening {
-                    this.hotkey_listening = false;
-                    this.hotkey_pending_mods = None;
-                    this.hotkey_error = None;
+                if this.hotkey.listening {
+                    this.hotkey.cancel();
                     cx.notify();
                 }
             }))
             .on_click(cx.listener(|this, _, window, cx| {
                 // 点击录入框：聚焦并进入监听态
-                window.focus(&this.hotkey_focus, cx);
-                this.hotkey_listening = true;
-                this.hotkey_pending_mods = None;
-                this.hotkey_error = None;
+                window.focus(&this.hotkey.focus, cx);
+                this.hotkey.begin();
                 cx.notify();
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if !this.hotkey_listening {
+                if !this.hotkey.listening {
                     return;
                 }
                 // 监听态吞掉全部按键，避免触发其他快捷键
@@ -97,29 +156,21 @@ impl SettingsPage {
                 let stroke = &event.keystroke;
                 match stroke.key.as_str() {
                     // Esc 退出监听态，不误改热键
-                    "escape" => {
-                        this.hotkey_listening = false;
-                        this.hotkey_pending_mods = None;
-                        this.hotkey_error = None;
-                    }
+                    "escape" => this.hotkey.cancel(),
                     // 修饰键自身按下：和弦进行中，展示由 on_modifiers_changed 维护
                     "shift" | "control" | "alt" | "platform" | "meta" | "super" | "cmd" | "win"
                     | "function" | "fn" => {}
                     _ => {
-                        this.hotkey_pending_mods = None;
+                        this.hotkey.take_pending_mods();
                         let candidate = hotkey_candidate(stroke);
                         let store = cx.global::<SettingsStore>().0.clone();
                         match store.update(cx, |state, cx| state.set_hotkey(&candidate, cx)) {
-                            Ok(()) => {
-                                this.hotkey_listening = false;
-                                this.hotkey_error = None;
-                            }
+                            Ok(()) => this.hotkey.succeed(),
                             Err(HotkeyError::Parse(_)) => {
-                                this.hotkey_error = Some("无效组合，请按其他组合键");
+                                this.hotkey.fail("无效组合，请按其他组合键", false)
                             }
                             Err(HotkeyError::Register(_)) => {
-                                this.hotkey_listening = false;
-                                this.hotkey_error = Some("组合键被其他程序占用，请更换组合");
+                                this.hotkey.fail("组合键被其他程序占用，请更换组合", true)
                             }
                         }
                     }
@@ -127,19 +178,20 @@ impl SettingsPage {
                 cx.notify();
             }))
             .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _, cx| {
-                if !this.hotkey_listening {
+                if !this.hotkey.listening {
                     return;
                 }
                 if event.modifiers.number_of_modifiers() == 0 {
                     // 和弦中松开全部修饰键而未按非修饰键：纯修饰键组合
-                    if this.hotkey_pending_mods.take().is_some() {
-                        this.hotkey_error = Some("纯修饰键组合无效，请按下一个非修饰键");
+                    if this.hotkey.take_pending_mods() {
+                        this.hotkey
+                            .fail("纯修饰键组合无效，请按下一个非修饰键", false);
                         cx.notify();
                     }
                 } else {
                     let mods = pretty_modifiers(&event.modifiers);
-                    if this.hotkey_pending_mods.as_deref() != Some(mods.as_str()) {
-                        this.hotkey_pending_mods = Some(mods);
+                    if this.hotkey.pending_mods.as_deref() != Some(mods.as_str()) {
+                        this.hotkey.set_pending_mods(Some(mods));
                         cx.notify();
                     }
                 }
