@@ -165,6 +165,8 @@ impl NotesPage {
             let weak = weak.clone();
             let note = note.clone();
             move |_, window, cx| {
+                // 操作按钮的点击不冒泡到卡片，避免连带选中该笔记
+                cx.stop_propagation();
                 let _ = weak.update(cx, |this, cx| {
                     this.open_taxonomy_dialog(note.clone(), window, cx)
                 });
@@ -185,6 +187,8 @@ impl NotesPage {
             .on_click({
                 let weak = weak.clone();
                 move |_, window, cx| {
+                    // 操作按钮的点击不冒泡到卡片，避免连带选中该笔记
+                    cx.stop_propagation();
                     let _ = weak.update(cx, |this, cx| this.confirm_delete(note_id, window, cx));
                 }
             });

@@ -21,13 +21,13 @@ use gpui_kit::*;
 
 use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
-use crate::utils::palette::{format_hex_color, palette_colors};
+use crate::utils::palette::{default_tag_color, format_hex_color, palette_colors};
 
 /// 色板色块边长。
 const SWATCH: Pixels = px(20.);
-/// 触发器色块宽高：收起态的矩形色块尺寸。
-const TRIGGER_WIDTH: Pixels = px(30.);
-const TRIGGER_HEIGHT: Pixels = px(18.);
+/// 触发器色块边长：正方形，比输入框高度（`heights::CONTROL`）小
+/// `spacing::XS`；加 2px hover 留白后命中区与输入框等高。
+const TRIGGER_SIZE: Pixels = px(24.);
 /// 弹层内容的固定宽度。
 const POPOVER_WIDTH: Pixels = px(232.);
 
@@ -37,9 +37,10 @@ const HUE_STEPS: usize = 12;
 /// 选色回调：无色与内置色板选项的选定动作。
 type SelectHandler = Rc<dyn Fn(Option<Hsla>, &mut Window, &mut App)>;
 
-/// 未选色（跟随主题）时打开自定义取色器的起始色：色板蓝（给出可见的拖动起点）。
+/// 未选色（跟随主题）时打开自定义取色器的起始色：与新增标签默认色
+/// 同为色板蓝（给出可见的拖动起点）。
 pub(crate) fn fallback_picker_color() -> Hsla {
-    palette_colors()[4] // Blue 500
+    default_tag_color()
 }
 
 /// 创建取色器状态：初值为当前颜色，未选色以 [`fallback_picker_color`] 为起点。
@@ -258,9 +259,9 @@ fn gradient_track(start: Hsla, end: Hsla) -> Div {
         ))
 }
 
-/// 取色 Popover 的矩形色块触发器：收起时显示当前颜色，未选色显示主题
-/// 中性面；hover 以底色提示可点，弹层打开时描边强调。标签管理页与
-/// 笔记页的标签编辑弹窗共用。
+/// 取色 Popover 的正方形色块触发器：收起时显示当前颜色，未选色显示主题
+/// 中性面；hover 以底色提示可点，弹层打开时描边强调。供笔记页的
+/// 标签编辑弹窗使用；标签管理页弹窗直接内联选色内容，无触发器。
 #[derive(IntoElement)]
 pub(crate) struct ColorSwatchTrigger {
     id: ElementId,
@@ -300,8 +301,7 @@ impl RenderOnce for ColorSwatchTrigger {
             .hover(|style| style.bg(theme.secondary))
             .child(
                 div()
-                    .w(TRIGGER_WIDTH)
-                    .h(TRIGGER_HEIGHT)
+                    .size(TRIGGER_SIZE)
                     .rounded(tokens::radius::SM)
                     .map(|this| match self.color {
                         Some(color) => this.bg(color).border_1().border_color(color.darken(0.25)),

@@ -25,7 +25,7 @@ use crate::ui::dialog_motion::DialogMotion;
 use crate::ui::focus::{TextFieldExt as _, input_border};
 use crate::ui::modal_session::{ModalSession, ModalSessionHost, begin_close};
 use crate::ui::tokens::{self, TextRole, TextRoleExt};
-use crate::utils::palette::format_hex_color;
+use crate::utils::palette::{default_tag_color, format_hex_color};
 use crate::widgets::color_picker::{
     ColorSwatchTrigger, color_popover_content, create_picker, fallback_picker_color,
 };
@@ -48,7 +48,7 @@ pub(super) struct TaxonomyModal {
     picker: Entity<ColorPickerState>,
     /// 草稿选中标签：保存时才写回笔记，取消即丢弃。
     selected: Vec<String>,
-    /// 新增标签将要使用的颜色；`None` 跟随主题（中性标签样式）。
+    /// 新增标签将要使用的颜色：默认色板蓝；`None` 跟随主题（中性标签样式）。
     new_tag_color: Option<Hsla>,
     /// 取色 Popover 是否展开（受控）。
     color_open: bool,
@@ -69,7 +69,8 @@ impl NotesPage {
         cx: &mut Context<Self>,
     ) {
         let tag_input = cx.new(|cx| InputState::new(window, cx).placeholder("输入标签…"));
-        let picker = create_picker(window, cx, None);
+        let default_color = default_tag_color();
+        let picker = create_picker(window, cx, Some(default_color));
 
         let weak = cx.entity().downgrade();
         let tag_sub = window.subscribe(&tag_input, cx, {
@@ -97,7 +98,7 @@ impl NotesPage {
             tag_input,
             picker,
             selected: note.tags,
-            new_tag_color: None,
+            new_tag_color: Some(default_color),
             color_open: false,
             session: ModalSession::new(self.taxonomy_seq, focus.clone(), window.focused(cx)),
             _tag_sub: tag_sub,
@@ -261,7 +262,7 @@ impl NotesPage {
             })
             .child(Icon::new(IconName::X).size_4());
 
-        // 取色器：收起时是矩形色块，展开为无色 / 色板 / 自定义滑杆
+        // 取色器：收起时是正方形色块，展开为无色 / 色板 / 自定义滑杆
         let swatch = ColorSwatchTrigger::new(("taxonomy-tag-color", seq as u64), new_tag_color)
             .selected(color_open);
         let picker_for_open = picker.clone();

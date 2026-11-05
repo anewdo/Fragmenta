@@ -1,7 +1,7 @@
 # Fragmenta 架构设计
 
 > 状态：定案（2026-10-18 功能模块组织调整）
-> 技术基线：Rust (edition 2024) · gpui-kit 0.8.1 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
+> 技术基线：Rust (edition 2024) · gpui-kit 0.9.0 · rusqlite 0.40 (bundled) · global-hotkey 0.8 · tray-icon · Windows 10/11
 > 形态：单进程多窗口桌面应用，无后台服务，轻量低内存
 > 术语：以根目录 `GLOSSARY.md` 为准（笔记 / 磁贴（速记窗口）/ 待办 / 标签）
 
@@ -292,13 +292,13 @@ impl HotkeyController {
 
 - **共享源文本输入组件**——`TextareaState` 封装 + 图片粘贴钩子 + 字数统计回调 + 光标处插入 md 引用（见 §8）。磁贴正文区与编辑器 Source 模式共同消费，图片粘贴钩子全应用仅此一份
 - **笔记编辑器组装**：模式枚举 `Source | Preview | Split`——Source = 源文本输入组件，Preview = `base::markdown(...).plugin(图片路径插件).scrollable(true)`，Split 左右双栏
-- 图片粘贴机制（spike ① 验证）：kit 0.7.1 提供 `Textarea::on_paste` 官方拦截点（`capture_action(Paste)` + `stop_propagation`），handler 签名 `Fn(&ClipboardItem, &mut Window, &mut App) -> bool`，返回 `true` 消费本次粘贴；图与文本并存时图片优先；图片经 `Image::from_bytes` 取字节 → `Images::import` → `TextareaState::insert` 光标处插入引用。handler 内实体更新必须经 `Entity::update` + handler 持有的 `&mut Window`——`WeakEntity::update_in` 走 `App::with_window`，在 capture_action 派发栈内窗口已被占用，查找必然失败
+- 图片粘贴机制（spike ① 验证，2026-11-05 于 kit 0.9.0 复核）：kit 提供 `Textarea::on_paste` 官方拦截点（`capture_action(Paste)` + `stop_propagation`），handler 签名 `Fn(&ClipboardItem, &mut Window, &mut App) -> bool`，返回 `true` 消费本次粘贴；图与文本并存时图片优先；图片经 `Image::from_bytes` 取字节 → `Images::import` → `TextareaState::insert` 光标处插入引用。handler 内实体更新必须经 `Entity::update` + handler 持有的 `&mut Window`——`WeakEntity::update_in` 走 `App::with_window`，在 capture_action 派发栈内窗口已被占用，查找必然失败
 - Split 双栏各自独立滚动为最终行为（见 ADR-0003）
 - 编辑器只含标题与正文，不含标签 UI（标签唯一查看编辑入口 = 左栏卡片右键菜单）
 
 ### 5.10 widgets
 
-`ResizableSplit`（拖分界调宽）、`toast`（App 级共享浮层：单实体全局 store，主窗口与磁贴窗各自挂载渲染，条目携带触发窗口句柄仅在该窗口可见）、`color_picker`（共享取色盘与矩形色块触发器 `ColorSwatchTrigger`）。toast 以 deferred 图层（priority 150）绘制在弹窗（`10 + layer`）与弹层（100）之上，卡片 `occlude` 遮挡命中：弹窗打开期间提示条可点击关闭、遮罩点击关闭弹窗互不干扰；条目分 notice（短滞留）与 report（含明细、长滞留）两档，级别分 Success / Warn / Error 三档（决定图标与强调色），图标与文字居中展示，出入场为右侧滑入 / 滑出的 ease-in-out 动画（respect 系统减少动态效果设置），至多同屏一条，新条目替换旧条目并重置计时。标签徽片与可选标签矩形仅笔记模块使用，归 `notes/components/`。待办页月历直接消费 kit `base::Calendar`（选日事件驱动清单刷新），无需自研 widget。
+`ResizableSplit`（拖分界调宽）、`toast`（App 级共享浮层：单实体全局 store，主窗口与磁贴窗各自挂载渲染，条目携带触发窗口句柄仅在该窗口可见）、`color_picker`（共享取色盘与正方形色块触发器 `ColorSwatchTrigger`）。toast 以 deferred 图层（priority 150）绘制在弹窗（`10 + layer`）与弹层（100）之上，卡片 `occlude` 遮挡命中：弹窗打开期间提示条可点击关闭、遮罩点击关闭弹窗互不干扰；条目分 notice（短滞留）与 report（含明细、长滞留）两档，级别分 Success / Warn / Error 三档（决定图标与强调色），图标与文字居中展示，出入场为右侧滑入 / 滑出的 ease-in-out 动画（respect 系统减少动态效果设置），至多同屏一条，新条目替换旧条目并重置计时。标签徽片与可选标签矩形仅笔记模块使用，归 `notes/components/`。待办页月历直接消费 kit `base::Calendar`（选日事件驱动清单刷新），无需自研 widget。
 
 ### 5.11 tray
 

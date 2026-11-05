@@ -1,4 +1,4 @@
-//! 内置色板（ADR-0008）：6 色 Material Design 500 档，作为标签管理页
+//! 6 色 Material Design 500 档，作为标签管理页
 //! 选色 Popover 的内置色来源；另有 `#RRGGBB` 颜色解析，供读回
 //! DB 中用户选定的持久颜色。
 //!
@@ -25,6 +25,12 @@ pub(crate) fn palette_colors() -> [Hsla; 6] {
         rgb(0x2196F3).into(), // Blue 500
         rgb(0x9C27B0).into(), // Purple 500
     ]
+}
+
+/// 笔记页标签编辑弹窗新增标签的默认色：色板蓝（Blue 500）。
+/// 与未选色时自定义取色器的起始色同源，避免两处各写一个蓝。
+pub(crate) fn default_tag_color() -> Hsla {
+    palette_colors()[4] // Blue 500
 }
 
 /// `#RRGGBB`（可省略 `#`）→ Hsla；格式非法返回 `None`（按未选色渲染）。
