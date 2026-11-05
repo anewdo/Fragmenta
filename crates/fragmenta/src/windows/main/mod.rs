@@ -18,7 +18,7 @@ use crate::ui::layout::LayoutClass;
 use crate::ui::tokens::{self, TextRole, TextRoleExt as _};
 use crate::widgets::toast::{ToastState, ToastStore};
 use crate::widgets::window_title_bar;
-use crate::windows::monitor::{clamp_to_display, display_containing};
+use crate::windows::monitor::{clamp_to_display, display_containing, persistable_origin};
 
 /// 侧栏展开 / 收起宽度动画时长
 const SIDEBAR_TRANSITION_DURATION: Duration = Duration::from_millis(200);
@@ -181,11 +181,17 @@ impl MainShell {
         let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
         let appearance_sub =
             settings.update(cx, |state, cx| state.attach_appearance_bridge(window, cx));
-        // 主窗口关闭语义（架构 §5.8）：close_to_quit 开 → 统一退出路径
-        // （保存失败时保留窗口）；关（默认）→ 窗口关闭但进程托盘驻留
+        // 设置项 close_to_quit 开 → 统一退出路径
+        // 关（默认）→ 窗口关闭但进程托盘驻留
         // （QuitMode::Explicit），热键照常呼出磁贴，托盘可再开主窗口。
         // TitleBar 关闭按钮在 Windows 经原生关闭路径，同样走到这里。
-        window.on_window_should_close(cx, |_, cx| {
+        window.on_window_should_close(cx, |window, cx| {
+            // 关闭决策时 hwnd 仍有效：显式提交最终位置，避免只依赖销毁期
+            // 的 bounds 观察（那时 `window_bounds()` 已退化成无效值）。
+            if let Some(origin) = persistable_origin(window.window_bounds()) {
+                let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
+                settings.update(cx, |state, cx| state.set_main_window_origin(origin, cx));
+            }
             let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
             if settings.read(cx).close_to_quit() || crate::app::quit::is_pending(cx) {
                 cx.defer(crate::app::quit::request_quit);
@@ -195,15 +201,13 @@ impl MainShell {
         });
         // 位置记忆：拖动 / resize / 跨屏后把左上角提交设置层（防抖落盘）。
         // 取 `window_bounds` 的客户区坐标（与打开时写入的值同一坐标系）；
-        // 最大化 / 全屏不是用户摆放的位置，跳过以保留还原后的位置。
+        // 最大化 / 全屏与窗口销毁期产出的无效 bounds 一律跳过。
         let bounds_sub = cx.observe_window_bounds(window, |_, window, cx| {
-            let WindowBounds::Windowed(bounds) = window.window_bounds() else {
+            let Some(origin) = persistable_origin(window.window_bounds()) else {
                 return;
             };
             let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
-            settings.update(cx, |state, cx| {
-                state.set_main_window_origin(bounds.origin, cx)
-            });
+            settings.update(cx, |state, cx| state.set_main_window_origin(origin, cx));
         });
         let toast = cx.global::<ToastStore>().0.clone();
         let toast_sub = cx.observe(&toast, |_, _, cx| cx.notify());

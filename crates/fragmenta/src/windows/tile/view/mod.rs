@@ -340,6 +340,11 @@ impl TileView {
     /// 变逻辑尺寸，设置层同值跳过。
     fn record_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let size = window.viewport_size();
+        // bounds 观察在窗口销毁阶段仍会触发一次，此时 viewport_size 可能
+        // 已被置 0；这类无效尺寸不能覆盖用户调整过的尺寸记忆。
+        if size.width.as_f32() <= 0. || size.height.as_f32() <= 0. {
+            return;
+        }
         let settings = cx.global::<SettingsStore>().0.clone();
         settings.update(cx, |state, cx| {
             state.set_tile_size(size.width, size.height, cx)
