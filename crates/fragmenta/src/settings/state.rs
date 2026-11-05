@@ -88,6 +88,26 @@ impl SettingsState {
         px(settings::clamp_font_px(self.settings.tile_font_px))
     }
 
+    /// 编辑器标题与正文的字体族；`None` 跟随系统默认。
+    pub fn editor_font_family(&self) -> Option<&str> {
+        self.settings.editor_font_family.as_deref()
+    }
+
+    /// 编辑器标题与正文的行距倍数。
+    pub fn editor_line_height(&self) -> f32 {
+        settings::clamp_line_height(self.settings.editor_line_height)
+    }
+
+    /// 磁贴小窗标题与正文的字体族；`None` 跟随系统默认。
+    pub fn tile_font_family(&self) -> Option<&str> {
+        self.settings.tile_font_family.as_deref()
+    }
+
+    /// 磁贴小窗标题与正文的行距倍数。
+    pub fn tile_line_height(&self) -> f32 {
+        settings::clamp_line_height(self.settings.tile_line_height)
+    }
+
     /// 关闭主窗口时直接退出；默认 false（托盘驻留）。
     pub fn close_to_quit(&self) -> bool {
         self.settings.close_to_quit
@@ -229,6 +249,50 @@ impl SettingsState {
         cx.emit(SettingsEvent::Changed);
     }
 
+    /// 更新编辑器字体族：`None` 回到系统默认，持久化 + 广播。
+    pub fn set_editor_font_family(&mut self, family: Option<String>, cx: &mut Context<Self>) {
+        let family = settings::normalize_font_family(family);
+        if self.settings.editor_font_family == family {
+            return;
+        }
+        self.settings.editor_font_family = family;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新编辑器行距：钳制到可调范围，持久化 + 广播。
+    pub fn set_editor_line_height(&mut self, value: f32, cx: &mut Context<Self>) {
+        let value = settings::clamp_line_height(value);
+        if self.settings.editor_line_height == value {
+            return;
+        }
+        self.settings.editor_line_height = value;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新小窗字体族：`None` 回到系统默认，持久化 + 广播。
+    pub fn set_tile_font_family(&mut self, family: Option<String>, cx: &mut Context<Self>) {
+        let family = settings::normalize_font_family(family);
+        if self.settings.tile_font_family == family {
+            return;
+        }
+        self.settings.tile_font_family = family;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
+    /// 更新小窗行距：钳制到可调范围，持久化 + 广播。
+    pub fn set_tile_line_height(&mut self, value: f32, cx: &mut Context<Self>) {
+        let value = settings::clamp_line_height(value);
+        if self.settings.tile_line_height == value {
+            return;
+        }
+        self.settings.tile_line_height = value;
+        self.persist();
+        cx.emit(SettingsEvent::Changed);
+    }
+
     /// 更新"关闭主窗口时直接退出"并立即持久化。
     pub fn set_close_to_quit(&mut self, value: bool, cx: &mut Context<Self>) {
         if self.settings.close_to_quit == value {
@@ -329,19 +393,25 @@ impl SettingsState {
     /// 再经热键控制器注册（被其他程序占用时返回 `Err`，旧热键保持可用），
     /// 成功后持久化 + 广播。返回 `Err` 时不落库。
     ///
-    /// 热键控制器缺席（启动期注册失败的降级模式）时跳过注册直接落库，
-    /// 重启后新热键生效。
+    /// 启动期注册冲突（控制器无已注册热键）时，同值重按也走一次注册：
+    /// 占用解除后原地恢复生效。热键控制器缺席（管理器创建失败的降级
+    /// 模式）时跳过注册直接落库，重启后新热键生效。
     pub fn set_hotkey(&mut self, hotkey: &str, cx: &mut Context<Self>) -> Result<(), HotkeyError> {
         hotkey.parse::<HotKey>().map_err(HotkeyError::Parse)?;
-        if self.settings.tile_hotkey == hotkey {
+        let unchanged = self.settings.tile_hotkey == hotkey;
+        if let Some(controller) = cx.try_global::<HotkeyController>() {
+            if unchanged && !controller.conflict() {
+                return Ok(());
+            }
+            controller.rebind(hotkey)?;
+        } else if unchanged {
             return Ok(());
         }
-        if let Some(controller) = cx.try_global::<HotkeyController>() {
-            controller.rebind(hotkey)?;
+        if !unchanged {
+            self.settings.tile_hotkey = hotkey.to_string();
+            self.persist();
+            cx.emit(SettingsEvent::Changed);
         }
-        self.settings.tile_hotkey = hotkey.to_string();
-        self.persist();
-        cx.emit(SettingsEvent::Changed);
         Ok(())
     }
 

@@ -2,7 +2,10 @@
 
 mod common;
 
-use fragmenta_core::settings::{FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, Settings, ThemeMode};
+use fragmenta_core::settings::{
+    FONT_SIZE_DEFAULT_PX, FONT_SIZE_MAX_PX, LINE_HEIGHT_DEFAULT, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN,
+    Settings, ThemeMode,
+};
 
 #[test]
 fn font_sizes_default_roundtrip_and_clamp() {
@@ -34,6 +37,47 @@ fn font_sizes_default_roundtrip_and_clamp() {
         loaded.tile_font_px,
         fragmenta_core::settings::FONT_SIZE_MIN_PX
     );
+}
+
+#[test]
+fn typography_defaults_roundtrip_and_clamp() {
+    // 字体族与行距：默认跟随系统 / 1.6 倍；保存后重读保留；
+    // 字体族去首尾空白，空串视为跟随系统；越界行距读取时钳制
+    let dir = common::TempDir::new("settings-typography");
+    let path = dir.path().join("settings.json");
+    let settings = Settings {
+        editor_font_family: Some("Microsoft YaHei".into()),
+        editor_line_height: 1.75,
+        tile_font_family: Some("  SimSun  ".into()),
+        tile_line_height: 1.4,
+        ..Default::default()
+    };
+    settings.save(&path).expect("保存失败");
+    let loaded = Settings::load(&path).expect("读取失败");
+    assert_eq!(
+        loaded.editor_font_family.as_deref(),
+        Some("Microsoft YaHei")
+    );
+    assert_eq!(loaded.tile_font_family.as_deref(), Some("SimSun"));
+    assert_eq!(loaded.editor_line_height, 1.75);
+    assert_eq!(loaded.tile_line_height, 1.4);
+
+    let default = Settings::default();
+    assert_eq!(default.editor_font_family, None);
+    assert_eq!(default.tile_font_family, None);
+    assert_eq!(default.editor_line_height, LINE_HEIGHT_DEFAULT);
+    assert_eq!(default.tile_line_height, LINE_HEIGHT_DEFAULT);
+
+    std::fs::write(
+        &path,
+        r#"{"editor_line_height":9.0,"tile_line_height":0.1,"editor_font_family":"   ","tile_font_family":"SimHei"}"#,
+    )
+    .expect("写入失败");
+    let loaded = Settings::load(&path).expect("读取失败");
+    assert_eq!(loaded.editor_line_height, LINE_HEIGHT_MAX);
+    assert_eq!(loaded.tile_line_height, LINE_HEIGHT_MIN);
+    assert_eq!(loaded.editor_font_family, None);
+    assert_eq!(loaded.tile_font_family.as_deref(), Some("SimHei"));
 }
 
 #[test]

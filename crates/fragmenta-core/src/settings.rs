@@ -20,6 +20,10 @@ pub const FONT_SIZE_MIN_PX: f32 = 12.;
 pub const FONT_SIZE_MAX_PX: f32 = 24.;
 /// 内容正文字号默认值（逻辑像素）。
 pub const FONT_SIZE_DEFAULT_PX: f32 = 16.;
+/// 行距倍数的可调范围与默认值（相对字号）。
+pub const LINE_HEIGHT_MIN: f32 = 1.2;
+pub const LINE_HEIGHT_MAX: f32 = 2.0;
+pub const LINE_HEIGHT_DEFAULT: f32 = 1.6;
 /// 笔记列表默认宽度（逻辑像素）；笔记页搜索栏与高级筛选面板沿用该宽度。
 pub const NOTES_LIST_WIDTH_DEFAULT_PX: f32 = 320.;
 
@@ -30,8 +34,16 @@ pub struct Settings {
     pub theme: ThemeMode,
     /// 编辑器与主窗口列表的正文字号（逻辑像素）。
     pub editor_font_px: f32,
+    /// 编辑器标题与正文的字体族；`None` 跟随系统默认。
+    pub editor_font_family: Option<String>,
+    /// 编辑器标题与正文的行距倍数。
+    pub editor_line_height: f32,
     /// 磁贴小窗的标题 / 正文字号（逻辑像素）。
     pub tile_font_px: f32,
+    /// 磁贴小窗标题与正文的字体族；`None` 跟随系统默认。
+    pub tile_font_family: Option<String>,
+    /// 磁贴小窗标题与正文的行距倍数。
+    pub tile_line_height: f32,
     /// 数据目录（数据库与图片图库平铺于其内），默认 {exe_dir}/data，可迁移。
     pub data_dir: PathBuf,
     /// 磁贴呼出热键，如 "ctrl+alt+n"。
@@ -82,7 +94,11 @@ impl Default for Settings {
         Self {
             theme: ThemeMode::default(),
             editor_font_px: FONT_SIZE_DEFAULT_PX,
+            editor_font_family: None,
+            editor_line_height: LINE_HEIGHT_DEFAULT,
             tile_font_px: FONT_SIZE_DEFAULT_PX,
+            tile_font_family: None,
+            tile_line_height: LINE_HEIGHT_DEFAULT,
             data_dir: default_data_dir(),
             tile_hotkey: default_tile_hotkey(),
             close_to_quit: false,
@@ -99,6 +115,23 @@ pub fn clamp_font_px(value: f32) -> f32 {
     } else {
         FONT_SIZE_DEFAULT_PX
     }
+}
+
+/// 行距钳制到可调范围并按 0.05 步进取整；损坏值回落默认
+/// （settings.json 可被手动编辑，滑杆拖动也避免浮点抖动写盘）。
+pub fn clamp_line_height(value: f32) -> f32 {
+    if value.is_finite() {
+        (value.clamp(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX) * 20.).round() / 20.
+    } else {
+        LINE_HEIGHT_DEFAULT
+    }
+}
+
+/// 字体族规范化：去首尾空白，空串视为跟随系统默认。
+pub fn normalize_font_family(family: Option<String>) -> Option<String> {
+    family
+        .map(|family| family.trim().to_string())
+        .filter(|family| !family.is_empty())
 }
 
 /// 默认数据目录：{exe_dir}/data。
@@ -131,6 +164,10 @@ impl Settings {
                 let mut settings: Self = serde_json::from_str(&text)?;
                 settings.editor_font_px = clamp_font_px(settings.editor_font_px);
                 settings.tile_font_px = clamp_font_px(settings.tile_font_px);
+                settings.editor_font_family = normalize_font_family(settings.editor_font_family);
+                settings.tile_font_family = normalize_font_family(settings.tile_font_family);
+                settings.editor_line_height = clamp_line_height(settings.editor_line_height);
+                settings.tile_line_height = clamp_line_height(settings.tile_line_height);
                 Ok(settings)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),

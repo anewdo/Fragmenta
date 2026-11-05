@@ -36,6 +36,11 @@ use crate::settings::SettingsStore;
 use crate::ui::tokens;
 use crate::widgets::ResizableSplit;
 
+/// 编辑页标题输入行高度：高于列表标题行，突出文档标题层级。
+const EDITOR_TITLE_ROW: Pixels = px(48.);
+/// 编辑页标题字号（固定，不随编辑器字号缩放）。
+const EDITOR_TITLE_FONT: Pixels = px(20.);
+
 /// 编辑器模式
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum EditorMode {
@@ -200,6 +205,12 @@ impl NoteEditor {
         cx.notify();
     }
 
+    /// 聚焦标题输入框：新建笔记后光标直接落在标题，便于立即录入。
+    pub fn focus_title(&self, window: &mut Window, cx: &mut App) {
+        let focus = self.title.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+    }
+
     /// 清空编辑器：正打开的笔记被删除时由笔记页调用。
     ///
     /// 该笔记的待写槽一并 cancel——笔记已不存在，到期 upsert 只会落出
@@ -268,13 +279,16 @@ impl Render for NoteEditor {
                 theme.danger,
             )
         };
-        // 内容阅读面：源文 / 预览正文随编辑器字号缩放
-        let content_px = cx.global::<SettingsStore>().0.read(cx).editor_font_px();
-        let editor_source_width = cx
-            .global::<SettingsStore>()
-            .0
-            .read(cx)
-            .editor_source_width();
+        // 内容阅读面：标题 / 正文随编辑器字号、字体与行距缩放；预览保持内置排版
+        let (content_px, font_family, line_height, editor_source_width) = {
+            let settings = cx.global::<SettingsStore>().0.read(cx);
+            (
+                settings.editor_font_px(),
+                settings.editor_font_family().map(str::to_string),
+                settings.editor_line_height(),
+                settings.editor_source_width(),
+            )
+        };
         let split_state = self.split_state.clone();
 
         // 顶部独占一行：三模式切换组靠右（未选中笔记时整组禁用）
@@ -326,7 +340,7 @@ impl Render for NoteEditor {
 
         let title_row = h_flex()
             .flex_shrink_0()
-            .min_h(tokens::heights::TITLE_ROW)
+            .min_h(EDITOR_TITLE_ROW)
             .items_center()
             .overflow_hidden()
             .border_t_1()
@@ -338,8 +352,10 @@ impl Render for NoteEditor {
                     .px(px(12.))
                     .font_weight(FontWeight::BOLD)
                     .h_auto()
-                    // 标题固定 16px：编辑器字号只作用于正文内容区
-                    .text_size(tokens::font::DEFAULT_CONTENT),
+                    // 标题固定字号：编辑器字号只作用于正文内容区
+                    .text_size(EDITOR_TITLE_FONT)
+                    .line_height(relative(line_height))
+                    .when_some(font_family.clone(), |el, family| el.font_family(family)),
             );
 
         // 正文区：三模式（Split 内分栏同样可拖动，两栏滚动独立）
@@ -349,6 +365,8 @@ impl Render for NoteEditor {
             .appearance(false)
             .h_full()
             .text_size(content_px)
+            .line_height(relative(line_height))
+            .when_some(font_family, |el, family| el.font_family(family))
             .into_any_element();
         let body = match self.mode {
             EditorMode::Source => div().size_full().child(source).into_any_element(),

@@ -212,11 +212,11 @@ impl NotesPage {
             .update(cx, |editor, cx| editor.load(&note, window, cx));
     }
 
-    /// 新增笔记：库里插入空笔记并选中载入编辑器。
+    /// 新增笔记：库里插入空笔记并选中载入编辑器，光标落到标题输入框。
     ///
     /// 空内容必然不命中当前搜索 / 筛选条件，因此先清空条件；`create_note`
-    /// 的 `Changed` 会同步触发订阅重拉，新卡片随列表快照返回，直接载入
-    /// 即可。新笔记没有待写槽，无需 `flush_now`，也不必逐段 `refresh`。
+    /// 的 `Changed` 在本次更新周期结束后才派发，选中依赖这里的直接重拉，
+    /// 新卡片随快照返回后立即载入。新笔记没有待写槽，无需 `flush_now`。
     fn create_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_tags.clear();
         self.filter_panel.update(cx, |panel, cx| {
@@ -227,6 +227,7 @@ impl NotesPage {
             .update(cx, |state, cx| state.set_value("", window, cx));
         match self.notes.update(cx, |state, cx| state.create_note(cx)) {
             Ok(id) => {
+                self.refresh(cx);
                 let note = self
                     .list
                     .as_ref()
@@ -234,6 +235,8 @@ impl NotesPage {
                     .and_then(|notes| notes.iter().find(|note| note.id == id).cloned());
                 if let Some(note) = note {
                     self.load_into_editor(note, window, cx);
+                    self.editor
+                        .update(cx, |editor, cx| editor.focus_title(window, cx));
                 }
             }
             Err(err) => {

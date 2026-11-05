@@ -32,7 +32,14 @@ const TODO_CHECK_SIZE: Pixels = px(16.);
 const TODO_FORM_TRANSITION: Duration = Duration::from_millis(200);
 
 impl TileView {
-    fn editor_content(&self, content_px: Pixels, border: Hsla, muted: Hsla) -> AnyElement {
+    fn editor_content(
+        &self,
+        content_px: Pixels,
+        font_family: Option<String>,
+        line_height: f32,
+        border: Hsla,
+        muted: Hsla,
+    ) -> AnyElement {
         v_flex()
             .flex_1()
             .min_h_0()
@@ -50,7 +57,9 @@ impl TileView {
                             .px(px(10.))
                             .font_weight(FontWeight::BOLD)
                             .h_auto()
-                            .text_size(content_px),
+                            .text_size(content_px)
+                            .line_height(relative(line_height))
+                            .when_some(font_family.clone(), |el, family| el.font_family(family)),
                     ),
             )
             .child(
@@ -59,7 +68,9 @@ impl TileView {
                         .element()
                         .appearance(false)
                         .h_full()
-                        .text_size(content_px),
+                        .text_size(content_px)
+                        .line_height(relative(line_height))
+                        .when_some(font_family, |el, family| el.font_family(family)),
                 ),
             )
             .child(
@@ -457,8 +468,15 @@ impl Render for TileView {
                 theme.title_bar,
             )
         };
-        // 内容阅读面：标题 / 正文随小窗字号缩放（辅助小字保持固定）
-        let content_px = cx.global::<SettingsStore>().0.read(cx).tile_font_px();
+        // 内容阅读面：标题 / 正文随小窗字号、字体与行距配置渲染（辅助小字保持固定）
+        let (content_px, font_family, line_height) = {
+            let settings = cx.global::<SettingsStore>().0.read(cx);
+            (
+                settings.tile_font_px(),
+                settings.tile_font_family().map(str::to_string),
+                settings.tile_line_height(),
+            )
+        };
 
         // 保存状态文案（兼拖拽区内容；区域内无交互元素，§9 条目 2）
         let status_label = match self.status {
@@ -587,7 +605,13 @@ impl Render for TileView {
             );
 
         let content = match self.mode {
-            TileMode::Editor => self.editor_content(content_px, border, muted_foreground),
+            TileMode::Editor => self.editor_content(
+                content_px,
+                font_family,
+                line_height,
+                border,
+                muted_foreground,
+            ),
             TileMode::Notes => self.notes_content(&weak, window, cx),
             TileMode::Todos => self.todos_content(&weak, window, cx),
         };
