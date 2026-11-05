@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-edition%202024-CE422B?logo=rust&logoColor=white" alt="Rust"></a>
-  <a href="https://crates.io/crates/gpui-kit"><img src="https://img.shields.io/badge/gpui--kit-0.8.1-4B8BBE" alt="gpui-kit"></a>
+  <a href="https://crates.io/crates/gpui-kit"><img src="https://img.shields.io/badge/gpui--kit-0.9.0-4B8BBE" alt="gpui-kit"></a>
   <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/SQLite-rusqlite%200.40-003B57?logo=sqlite&logoColor=white" alt="SQLite"></a>
   <a href="https://github.com/anewdo/Fragmenta/releases"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?logo=windows&logoColor=white" alt="Windows"></a>
 </p>
