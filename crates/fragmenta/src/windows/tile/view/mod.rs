@@ -1,6 +1,6 @@
 //! 磁贴视图状态与交互逻辑：防抖保存闭环、模式切换、数据刷新与窗口操作。
-//! 视图构建（顶栏 + 三模式内容 + 行渲染 + 待办内联表单）见 `render.rs`，
-//! headless 测试见 `tests.rs`。
+//! 视图构建见 `render.rs`
+//! headless 测试见 `tests.rs`
 
 mod render;
 
@@ -189,8 +189,8 @@ impl TileView {
             closing
         });
 
-        // 焦点落正文：热键呼出后立即输入
-        let focus = source.textarea().read(cx).focus_handle(cx);
+        // 焦点落标题：热键呼出后立即输入标题
+        let focus = title.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
 
         Self {
@@ -370,7 +370,7 @@ impl TileView {
         self.status = SaveIndicator::Untouched;
         self.mode = TileMode::Editor;
         self.midnight_task = None;
-        self.focus_editor(window, cx);
+        self.focus_title(window, cx);
         cx.notify();
     }
 
@@ -408,6 +408,11 @@ impl TileView {
             }
         }
         cx.notify();
+    }
+
+    fn focus_title(&self, window: &mut Window, cx: &mut App) {
+        let focus = self.title.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
     }
 
     fn focus_editor(&self, window: &mut Window, cx: &mut App) {

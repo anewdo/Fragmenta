@@ -13,7 +13,7 @@ use std::sync::Arc;
 use fragmenta_core::db::{Db, Result as DbResult};
 use fragmenta_core::media::Images;
 use fragmenta_core::settings::Settings;
-use gpui_kit::{App, AppContext, QuitMode};
+use gpui_kit::{App, AppContext, Global, QuitMode, Subscription};
 
 use crate::editor::ImageStore;
 use crate::hotkey::HotkeyController;
@@ -39,6 +39,30 @@ fn exe_dir() -> PathBuf {
 /// 命令行是否携带 `--silent`（开机自启动 Run 键固定携带）。
 fn silent_start() -> bool {
     std::env::args().any(|arg| arg == "--silent")
+}
+
+/// 窗口生命周期观察登记：订阅须比窗口视图活得久（视图随窗口一起 drop），
+/// 由 App 全局持有。
+struct WindowCloseWatch {
+    _closed_sub: Subscription,
+}
+
+impl Global for WindowCloseWatch {}
+
+/// 最后一个窗口关闭后回收后台驻留内存：释放 SQLite 页缓存并裁剪工作集。
+/// 仅在场上无任何窗口时执行，避免把仍在使用的窗口页反复换出。
+fn watch_window_close(cx: &mut App) {
+    let closed_sub = cx.on_window_closed(|cx, _| {
+        if !cx.windows().is_empty() {
+            return;
+        }
+        let settings = cx.global::<SettingsStore>().0.clone();
+        settings.update(cx, |state, _| state.shrink_database_memory());
+        cx.defer(|_| crate::win32::trim_working_set());
+    });
+    cx.set_global(WindowCloseWatch {
+        _closed_sub: closed_sub,
+    });
 }
 
 /// 应用入口；`main.rs` 仅调用此函数。
@@ -82,9 +106,16 @@ pub fn run() {
                 eprintln!("[fragmenta] store 初始化失败: {err}");
                 std::process::exit(1);
             }
+            watch_window_close(cx);
             match HotkeyController::init(&settings.tile_hotkey, cx) {
-                Ok(controller) => cx.set_global(controller),
-                Err(err) => eprintln!("[fragmenta] 磁贴热键注册失败: {err}"),
+                Ok(controller) => {
+                    // 注册失败不中止启动：冲突状态由设置页红字提示，改绑即恢复
+                    if let Some(reason) = controller.conflict_reason() {
+                        eprintln!("[fragmenta] 磁贴热键注册失败: {reason}");
+                    }
+                    cx.set_global(controller);
+                }
+                Err(err) => eprintln!("[fragmenta] 热键管理器初始化失败: {err}"),
             }
             tray::init(cx);
             // 单实例激活：另一个进程的普通启动置位事件，这里打开 / 前置主窗口

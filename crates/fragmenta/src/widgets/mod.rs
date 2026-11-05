@@ -1,4 +1,4 @@
-//! widgets 层（架构 §5.10）：跨页面复用的通用小部件。
+//! 跨页面复用的通用小部件
 
 pub mod color_picker;
 pub mod resizable_split;

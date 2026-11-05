@@ -104,11 +104,6 @@ pub(crate) fn open_handle(cx: &mut App) -> Option<AnyWindowHandle> {
                     .is_some_and(|main| main.handle.window_id() == closed_id);
                 if is_current && closed_id == handle.window_id() {
                     cx.remove_global::<MainWindow>();
-                    let settings = cx.global::<crate::settings::SettingsStore>().0.clone();
-                    settings.update(cx, |state, _| state.shrink_database_memory());
-                    cx.defer(|_| {
-                        crate::win32::trim_working_set();
-                    });
                 }
             });
             cx.set_global(MainWindow {

@@ -1,4 +1,4 @@
-//! `NotesState`（架构 §5.6 / D4 / D5）：笔记防抖保存、落库与事件广播。
+//! 笔记防抖保存、落库与事件广播。
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -10,7 +10,7 @@ use fragmenta_core::model::{Note, NoteFilter};
 
 use gpui_kit::{Context, Entity, EntityId, EventEmitter, Global, Task};
 
-/// App 级共享笔记 store（D3）：主窗口与全部磁贴持有同一 handle。
+/// App 级共享笔记 store：主窗口与全部磁贴持有同一 handle。
 pub(crate) struct NotesStore(pub(crate) Entity<NotesState>);
 
 impl Global for NotesStore {}
@@ -28,21 +28,21 @@ pub enum NotesEvent {
     },
 }
 
-/// 落库结果：`Failed` 时磁贴持续提示，下一次防抖保存自然重试（架构 §5.6 错误呈现）。
+/// 落库结果：`Failed` 时磁贴持续提示，下一次防抖保存自然重试。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveStatus {
     Saved,
     Failed,
 }
 
-/// 防抖槽身份（ADR-0001）：未落库草稿用调用方稳定标识，落库后用笔记 id。
+/// 防抖槽身份:未落库草稿用调用方稳定标识，落库后用笔记 id。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum NoteKey {
     Draft(EntityId),
     Note(i64),
 }
 
-/// 待保存草稿：携带防抖槽身份与完整标题 / 正文（每次提交均为全量内容）。
+/// 待保存草稿:携带防抖槽身份与完整标题 / 正文（每次提交均为全量内容）。
 #[derive(Debug, Clone)]
 pub struct NoteDraft {
     pub key: NoteKey,
